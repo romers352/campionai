@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
-import { api, streamChat, ttsAudio } from "@/lib/api";
+import { api, streamChat, ttsAudio, API } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -14,7 +14,7 @@ import EscalationCard from "@/components/EscalationCard";
 import CheckinBanner from "@/components/CheckinBanner";
 import {
   Plus, ArrowUp, Brain, Settings, LifeBuoy, Menu, Lock,
-  MessageSquare, Trash2, Shield, Mic, Volume2, VolumeX, Sparkles,
+  MessageSquare, Trash2, Shield, Mic, Volume2, VolumeX, Sparkles, Paperclip, X,
 } from "lucide-react";
 
 export default function Chat() {
@@ -34,10 +34,15 @@ export default function Chat() {
   const [voiceEnabled, setVoiceEnabled] = useState(false);
   const [speakOn, setSpeakOn] = useState(false);
   const [listening, setListening] = useState(false);
+  const [attachment, setAttachment] = useState(null);
+  const [uploading, setUploading] = useState(false);
   const scrollRef = useRef(null);
   const inputRef = useRef(null);
   const recognitionRef = useRef(null);
   const audioRef = useRef(null);
+  const fileRef = useRef(null);
+
+  const fileUrl = (path) => `${API}/files/${path}?auth=${localStorage.getItem("campion_token")}`;
 
   const name = user?.profile?.preferred_name || "friend";
 
@@ -97,7 +102,33 @@ export default function Chat() {
     setActiveId(id);
     setMobileNav(false);
     const { data } = await api.get(`/sessions/${id}/messages`);
-    setMessages(data.messages.map((m) => ({ id: m.id, role: m.role, content: m.content })));
+    setMessages(data.messages.map((m) => ({ id: m.id, role: m.role, content: m.content, image_path: m.image_path })));
+  };
+
+  const pickFile = async (e) => {
+    const f = e.target.files?.[0];
+    if (!f) return;
+    if (!f.type.startsWith("image/")) { toast.error("Please choose an image"); e.target.value = ""; return; }
+    if (f.size > 10 * 1024 * 1024) { toast.error("Image is too large (max 10MB)"); e.target.value = ""; return; }
+    setUploading(true);
+    const preview = URL.createObjectURL(f);
+    try {
+      const fd = new FormData();
+      fd.append("file", f);
+      const { data } = await api.post("/upload", fd, { headers: { "Content-Type": "multipart/form-data" } });
+      setAttachment({ path: data.path, preview, name: f.name });
+    } catch {
+      toast.error("Upload failed");
+      URL.revokeObjectURL(preview);
+    } finally {
+      setUploading(false);
+      e.target.value = "";
+    }
+  };
+
+  const clearAttachment = () => {
+    if (attachment?.preview) URL.revokeObjectURL(attachment.preview);
+    setAttachment(null);
   };
 
   const newChat = () => { setActiveId(null); setMessages([]); setMobileNav(false); };
@@ -112,10 +143,12 @@ export default function Chat() {
 
   const send = async (overrideText) => {
     const text = (overrideText ?? input).trim();
-    if (!text || streaming) return;
+    if ((!text && !attachment) || streaming || uploading) return;
     setInput("");
     setCheckin(null);
-    const userMsg = { id: `u-${Date.now()}`, role: "user", content: text };
+    const att = attachment;
+    setAttachment(null);
+    const userMsg = { id: `u-${Date.now()}`, role: "user", content: text, image_preview: att?.preview, image_path: att?.path };
     const aiId = `a-${Date.now()}`;
     setMessages((m) => [...m, userMsg, { id: aiId, role: "assistant", content: "", escalation: null }]);
     setStreaming(true);
@@ -123,7 +156,7 @@ export default function Chat() {
     let sessionId = activeId;
     let fullText = "";
     await streamChat({
-      body: { session_id: sessionId, message: text, private: user?.private_mode },
+      body: { session_id: sessionId, message: text, private: user?.private_mode, image_path: att?.path },
       onMeta: (meta) => { sessionId = meta.session_id; if (!activeId) setActiveId(meta.session_id); },
       onDelta: (chunk) => {
         setThinking(false);
@@ -252,8 +285,11 @@ export default function Chat() {
                 <div key={m.id}>
                   {m.role === "user" ? (
                     <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.4 }}
-                      className="ml-auto max-w-[75%] border-l border-border pl-5" data-testid="user-message">
-                      <p className="text-base leading-relaxed whitespace-pre-wrap text-foreground/90 text-right">{m.content}</p>
+                      className="ml-auto max-w-[75%] border-l border-border pl-5 flex flex-col items-end gap-2" data-testid="user-message">
+                      {(m.image_preview || m.image_path) && (
+                        <img src={m.image_preview || fileUrl(m.image_path)} alt="shared" className="rounded-2xl max-h-64 border border-border object-cover" data-testid="message-image" />
+                      )}
+                      {m.content && <p className="text-base leading-relaxed whitespace-pre-wrap text-foreground/90 text-right">{m.content}</p>}
                     </motion.div>
                   ) : (
                     <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5 }} data-testid="ai-message">
@@ -274,29 +310,39 @@ export default function Chat() {
 
         <div className="px-6 md:px-8 pb-8 pt-2">
           <div className="max-w-3xl mx-auto">
-            <div className="relative flex items-end gap-2 rounded-3xl border border-border bg-white/[0.02] backdrop-blur-md p-2 focus-within:border-foreground/40 transition-colors">
-              <button
-                data-testid="mic-button"
-                onClick={toggleListen}
-                className={`shrink-0 h-10 w-10 rounded-full flex items-center justify-center transition-colors ${listening ? "bg-escalation text-white soft-pulse" : "text-foreground/70 hover:bg-accent hover:text-foreground"}`}
-                title="Speak"
-              >
-                <Mic className="h-4 w-4" />
-              </button>
-              <Textarea
-                data-testid="chat-input"
-                ref={inputRef}
-                value={input}
-                onChange={(e) => setInput(e.target.value)}
-                onKeyDown={onKey}
-                placeholder={`${listening ? "Listening…" : "Message CampionAI"}${user?.private_mode ? " · Private Mode" : ""}`}
-                rows={1}
-                className="flex-1 resize-none border-0 bg-transparent focus-visible:ring-0 shadow-none max-h-40 text-base py-2.5 placeholder:text-muted-foreground"
-              />
-              <Button data-testid="chat-send-button" onClick={() => send()} disabled={streaming || !input.trim()}
-                size="icon" className="rounded-full h-10 w-10 shrink-0 bg-primary text-primary-foreground hover:bg-zinc-200 disabled:opacity-30">
-                <ArrowUp className="h-4 w-4" />
-              </Button>
+            <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={pickFile} data-testid="file-input" />
+            <div className="rounded-[1.75rem] border border-border bg-white/[0.03] backdrop-blur-md px-2.5 py-2 focus-within:border-foreground/40 transition-colors">
+              {attachment && (
+                <div className="flex items-center gap-3 px-2 pt-1.5 pb-2.5" data-testid="attachment-preview">
+                  <img src={attachment.preview} alt="" className="h-14 w-14 rounded-xl object-cover border border-border" />
+                  <span className="text-sm text-muted-foreground truncate flex-1">{attachment.name}</span>
+                  <button onClick={clearAttachment} className="text-muted-foreground hover:text-foreground" data-testid="remove-attachment"><X className="h-4 w-4" /></button>
+                </div>
+              )}
+              <div className="flex items-center gap-1.5">
+                <button data-testid="attach-button" onClick={() => fileRef.current?.click()} disabled={uploading}
+                  className="shrink-0 h-10 w-10 rounded-full flex items-center justify-center text-foreground/60 hover:bg-accent hover:text-foreground transition-colors disabled:opacity-40" title="Share a photo">
+                  {uploading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Paperclip className="h-4 w-4" />}
+                </button>
+                <button data-testid="mic-button" onClick={toggleListen} title="Speak"
+                  className={`shrink-0 h-10 w-10 rounded-full flex items-center justify-center transition-colors ${listening ? "bg-escalation text-white soft-pulse" : "text-foreground/60 hover:bg-accent hover:text-foreground"}`}>
+                  <Mic className="h-4 w-4" />
+                </button>
+                <Textarea
+                  data-testid="chat-input"
+                  ref={inputRef}
+                  value={input}
+                  onChange={(e) => setInput(e.target.value)}
+                  onKeyDown={onKey}
+                  placeholder={`${listening ? "Listening…" : attachment ? "Add a note (optional)" : "Message CampionAI"}${user?.private_mode ? " · Private Mode" : ""}`}
+                  rows={1}
+                  className="flex-1 resize-none border-0 bg-transparent focus-visible:ring-0 shadow-none max-h-40 min-h-[40px] leading-[40px] py-0 text-base placeholder:text-muted-foreground"
+                />
+                <Button data-testid="chat-send-button" onClick={() => send()} disabled={streaming || uploading || (!input.trim() && !attachment)}
+                  size="icon" className="rounded-full h-10 w-10 shrink-0 bg-primary text-primary-foreground hover:bg-zinc-200 disabled:opacity-30">
+                  <ArrowUp className="h-4 w-4" />
+                </Button>
+              </div>
             </div>
             <p className="text-[11px] text-muted-foreground/70 text-center mt-3">
               CampionAI is an AI companion, not a therapist. In an emergency, call your local emergency number.

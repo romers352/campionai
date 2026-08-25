@@ -53,14 +53,14 @@ class ModelRouter:
             return await self._openrouter(system, user_text, route["model"], settings, stream=False)
         return await self._emergent(system, user_text, route, session_id, stream=False)
 
-    async def stream(self, system: str, user_text: str, tier: str, session_id: str):
+    async def stream(self, system: str, user_text: str, tier: str, session_id: str, image_b64: str = None):
         route = await self.route_for(tier)
         settings = await self._settings()
         if route["provider"] == "openrouter" or settings.get("llm_provider") == "openrouter":
             async for chunk in self._openrouter_stream(system, user_text, route["model"], settings):
                 yield chunk
         else:
-            async for chunk in self._emergent_stream(system, user_text, route, session_id):
+            async for chunk in self._emergent_stream(system, user_text, route, session_id, image_b64):
                 yield chunk
 
     # ---------- Emergent ----------
@@ -76,10 +76,14 @@ class ModelRouter:
         resp = await chat.send_message(UserMessage(text=user_text))
         return resp if isinstance(resp, str) else str(resp)
 
-    async def _emergent_stream(self, system, user_text, route, session_id):
-        from emergentintegrations.llm.chat import TextDelta, StreamDone
+    async def _emergent_stream(self, system, user_text, route, session_id, image_b64=None):
+        from emergentintegrations.llm.chat import TextDelta, StreamDone, ImageContent
         chat = self._emergent_chat(system, route, session_id)
-        async for ev in chat.stream_message(UserMessage(text=user_text)):
+        if image_b64:
+            msg = UserMessage(text=user_text, file_contents=[ImageContent(image_base64=image_b64)])
+        else:
+            msg = UserMessage(text=user_text)
+        async for ev in chat.stream_message(msg):
             if isinstance(ev, TextDelta):
                 yield ev.content
             elif isinstance(ev, StreamDone):

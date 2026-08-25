@@ -5,7 +5,7 @@ import logging
 from pathlib import Path
 from datetime import datetime, timezone, timedelta
 
-from fastapi import FastAPI, APIRouter, Depends, HTTPException, Request
+from fastapi import FastAPI, APIRouter, Depends, HTTPException, Request, UploadFile, File, Query
 from fastapi.responses import StreamingResponse, Response
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
@@ -30,6 +30,7 @@ from safety import classify_message
 from memory_engine import extract_memories, build_memory_context
 from notifications import alert_contact, summarize
 from voice import synthesize
+from storage import put_object, get_object, init_storage, APP_NAME, MIME_TYPES
 from emergentintegrations.payments.stripe.checkout import StripeCheckout, CheckoutSessionRequest
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
@@ -283,11 +284,20 @@ async def chat_stream(inp: ChatInput, user=Depends(get_current_user)):
 
     user_msg = {
         "id": new_id(), "session_id": session_id, "user_id": user["id"],
-        "role": "user", "content": inp.message, "private": private, "created_at": now_iso(),
+        "role": "user", "content": inp.message, "private": private,
+        "image_path": inp.image_path, "created_at": now_iso(),
     }
     await db.messages.insert_one(dict(user_msg))
 
-    risk = await classify_message(router_engine, inp.message, session_id)
+    image_b64 = None
+    if inp.image_path:
+        try:
+            raw_bytes, _ct = get_object(inp.image_path)
+            image_b64 = base64.b64encode(raw_bytes).decode("utf-8")
+        except Exception as e:
+            logger.error(f"image load failed: {e}")
+
+    risk = await classify_message(router_engine, inp.message or "shared an image", session_id)
 
     transcript = await recent_transcript(session_id)
     memory_ctx = "" if private else await build_memory_context(db, user["id"])
@@ -310,7 +320,7 @@ async def chat_stream(inp: ChatInput, user=Depends(get_current_user)):
         yield _sse({"type": "meta", "session_id": session_id, "risk": risk, "private": private})
         full = ""
         try:
-            async for chunk in router_engine.stream(system, inp.message, tier=("powerful" if risk in ("high", "medium") else "medium"), session_id=session_id):
+            async for chunk in router_engine.stream(system, inp.message or "I'm sharing an image with you — take a look.", tier=("powerful" if risk in ("high", "medium") else "medium"), session_id=session_id, image_b64=image_b64):
                 full += chunk
                 yield _sse({"type": "delta", "content": chunk})
         except Exception as e:
@@ -708,6 +718,46 @@ async def integrations_status(admin=Depends(get_admin_user)):
     }
 
 
+# ---------------- Uploads (object storage) ----------------
+@api.post("/upload")
+async def upload_file(file: UploadFile = File(...), user=Depends(get_current_user)):
+    ext = (file.filename.rsplit(".", 1)[-1].lower() if "." in (file.filename or "") else "bin")
+    content_type = file.content_type or MIME_TYPES.get(ext, "application/octet-stream")
+    data = await file.read()
+    if len(data) > 10 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="File too large (max 10MB)")
+    path = f"{APP_NAME}/uploads/{user['id']}/{new_id()}.{ext}"
+    try:
+        result = put_object(path, data, content_type)
+    except Exception as e:
+        logger.error(f"upload failed: {e}")
+        raise HTTPException(status_code=502, detail="Upload failed")
+    doc = {
+        "id": new_id(), "user_id": user["id"], "storage_path": result["path"],
+        "original_filename": file.filename, "content_type": content_type,
+        "size": result.get("size", len(data)), "is_image": content_type.startswith("image/"),
+        "is_deleted": False, "created_at": now_iso(),
+    }
+    await db.files.insert_one(dict(doc))
+    return {"file_id": doc["id"], "path": result["path"], "content_type": content_type, "is_image": doc["is_image"]}
+
+
+@api.get("/files/{path:path}")
+async def serve_file(path: str, auth: str = Query(None)):
+    if not auth:
+        raise HTTPException(status_code=401, detail="Missing auth")
+    from auth import decode_token
+    uid = decode_token(auth)
+    record = await db.files.find_one({"storage_path": path, "user_id": uid, "is_deleted": False}, {"_id": 0})
+    if not record:
+        raise HTTPException(status_code=404, detail="File not found")
+    try:
+        data, content_type = get_object(path)
+    except Exception:
+        raise HTTPException(status_code=404, detail="File not found")
+    return Response(content=data, media_type=record.get("content_type", content_type))
+
+
 # ---------------- Payments (Stripe Flow B) ----------------
 STRIPE_API_KEY = os.environ.get("STRIPE_API_KEY", "sk_test_emergent")
 
@@ -1052,6 +1102,11 @@ app.add_middleware(
 
 @app.on_event("startup")
 async def seed():
+    try:
+        init_storage()
+        logger.info("Object storage initialized")
+    except Exception as e:
+        logger.error(f"Storage init failed: {e}")
     admin_email = "admin@campionai.com"
     if not await db.users.find_one({"email": admin_email}):
         await db.users.insert_one({

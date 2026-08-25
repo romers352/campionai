@@ -69,6 +69,7 @@ class ChatInput(BaseModel):
     session_id: Optional[str] = None
     message: str
     private: bool = False
+    image_path: Optional[str] = None
 
 
 class SessionCreate(BaseModel):
