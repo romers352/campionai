@@ -10,6 +10,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } f
 import { toast } from "@/components/ui/sonner";
 import MemoryDrawer from "@/components/MemoryDrawer";
 import SettingsDialog from "@/components/SettingsDialog";
+import AccountMenu from "@/components/AccountMenu";
 import EscalationCard from "@/components/EscalationCard";
 import CheckinBanner from "@/components/CheckinBanner";
 import {
@@ -257,6 +258,7 @@ export default function Chat() {
             <Button variant="outline" size="sm" className="rounded-full gap-1.5 border-escalation/40 text-escalation hover:bg-escalation/10 hover:text-escalation" onClick={requestHandoff} data-testid="header-handoff-button">
               <LifeBuoy className="h-4 w-4" /> <span className="hidden sm:inline">Talk to a human</span>
             </Button>
+            <AccountMenu />
           </div>
         </header>
 

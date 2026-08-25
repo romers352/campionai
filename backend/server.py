@@ -1,4 +1,5 @@
 import os
+import re
 import json
 import base64
 import logging
@@ -10,19 +11,21 @@ from fastapi.responses import StreamingResponse, Response
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
+from pymongo import ReturnDocument
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / ".env")
 
 from models import (
     RegisterInput, LoginInput, OnboardingInput, ProfileUpdate, ChatInput,
-    SessionCreate, MemoryUpdate, ModelRouteConfig, ProfessionalInput,
+    SessionCreate, MemoryUpdate, ModelRouteConfig,
     ProviderSettings, PrivateModeInput, VoiceSettingsInput, TTSInput,
-    CheckoutInput, FoodInput, EventInput, PlanItemToggle, PaypalActivate, now_iso, new_id,
+    FoodInput, EventInput, PlanItemToggle, PaypalActivate, DonationOrder,
+    now_iso, new_id,
 )
 from auth import (
     hash_password, verify_password, create_token,
-    build_get_current_user, build_get_admin_user,
+    build_get_current_user, build_get_admin_user, build_get_doctor_user, build_authenticate,
 )
 from hotlines import get_hotlines, country_list, COUNTRY_NAMES
 from llm_router import ModelRouter, DEFAULT_ROUTES, list_openrouter_models
@@ -31,8 +34,19 @@ from memory_engine import extract_memories, build_memory_context
 from notifications import alert_contact, summarize
 from voice import synthesize
 from storage import put_object, get_object, init_storage, APP_NAME, MIME_TYPES
-from paypal_client import get_subscription as paypal_get_subscription
-from emergentintegrations.payments.stripe.checkout import StripeCheckout, CheckoutSessionRequest
+from doctors import make_router as doctors_router, is_online as doctor_is_online, public_doctor
+from consults import make_router as consults_router
+from signaling import make_router as signaling_router
+from paypal_client import (
+    get_subscription as paypal_get_subscription,
+    cancel_subscription as paypal_cancel_subscription,
+    activate_subscription as paypal_activate_subscription,
+    subscription_transactions as paypal_subscription_transactions,
+    create_order as paypal_create_order,
+    capture_order as paypal_capture_order,
+    verify_webhook as paypal_verify_webhook,
+    ensure_plans as paypal_ensure_plans,
+)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 logger = logging.getLogger("campionai")
@@ -45,8 +59,10 @@ app = FastAPI(title="CampionAI")
 api = APIRouter(prefix="/api")
 
 router_engine = ModelRouter(db)
+authenticate = build_authenticate(db)
 get_current_user = build_get_current_user(db)
 get_admin_user = build_get_admin_user(get_current_user)
+get_doctor_user = build_get_doctor_user(get_current_user, db)
 
 CHECKIN_INTERVALS = {"daily": 20, "few_times_week": 55, "user_set": None, "off": None}
 
@@ -122,6 +138,8 @@ async def register(inp: RegisterInput):
         "email": inp.email.lower(),
         "password_hash": hash_password(inp.password),
         "is_admin": False,
+        "role": "doctor" if inp.as_doctor else "user",
+        "token_version": 0,
         "onboarded": False,
         "private_mode": False,
         "profile": {"preferred_name": inp.preferred_name, "likes": [], "important_people": [], "goals": [],
@@ -134,7 +152,7 @@ async def register(inp: RegisterInput):
         "created_at": now_iso(),
     }
     await db.users.insert_one(doc)
-    return {"token": create_token(uid), "user": _public_user(doc)}
+    return {"token": create_token(uid, 0), "user": _public_user(doc)}
 
 
 @api.post("/auth/login")
@@ -142,7 +160,15 @@ async def login(inp: LoginInput):
     user = await db.users.find_one({"email": inp.email.lower()})
     if not user or not verify_password(inp.password, user["password_hash"]):
         raise HTTPException(status_code=401, detail="Invalid email or password")
-    return {"token": create_token(user["id"]), "user": _public_user(user)}
+    return {"token": create_token(user["id"], user.get("token_version", 0)), "user": _public_user(user)}
+
+
+@api.post("/auth/logout")
+async def logout(user=Depends(get_current_user)):
+    """Bumping token_version invalidates every token already issued for this user —
+    including any that leaked into a URL or a proxy log."""
+    await db.users.update_one({"id": user["id"]}, {"$inc": {"token_version": 1}})
+    return {"ok": True}
 
 
 @api.get("/auth/me")
@@ -153,6 +179,7 @@ async def me(user=Depends(get_current_user)):
 def _public_user(u):
     return {
         "id": u["id"], "email": u["email"], "is_admin": u.get("is_admin", False),
+        "role": u.get("role", "user"),
         "onboarded": u.get("onboarded", False), "private_mode": u.get("private_mode", False),
         "profile": u.get("profile", {}), "trusted_contact": u.get("trusted_contact"),
         "country": u.get("country"), "checkin_frequency": u.get("checkin_frequency", "daily"),
@@ -366,10 +393,30 @@ async def _wellness_coach_context(user) -> str:
     return "Today's wellness plan — " + "; ".join(parts) if parts else ""
 
 
+async def _find_crisis_doctor(user):
+    """Prefer a verified doctor who is online in the user's country, then any online
+    doctor, then any verified doctor at all. Returns (doctor, is_online)."""
+    country = (user.get("country") or "").upper()
+    verified = await db.doctors.find({"status": "verified"}, {"_id": 0}).to_list(200)
+    if not verified:
+        return None, False
+    online = [d for d in verified if doctor_is_online(d)]
+    for pool in (
+        [d for d in online if d.get("country") == country],
+        online,
+        [d for d in verified if d.get("country") == country],
+        verified,
+    ):
+        if pool:
+            pool.sort(key=lambda d: (not d.get("is_volunteer"), -float(d.get("rating_avg", 0) or 0)))
+            return pool[0], doctor_is_online(pool[0])
+    return None, False
+
+
 async def _trigger_escalation(user, session_id, trigger_text):
     tc = user.get("trusted_contact")
     hotlines = get_hotlines(user.get("country"))
-    prof = await db.professionals.find_one({"verified": True}, {"_id": 0})
+    prof, prof_online = await _find_crisis_doctor(user)
     name = user.get("profile", {}).get("preferred_name") or "someone you care about"
     actions = ["Crisis hotlines surfaced"]
     tc_notified = False
@@ -395,9 +442,9 @@ async def _trigger_escalation(user, session_id, trigger_text):
         subject = f"CampionAI handoff: a user may need support"
         text = f"CampionAI detected a high-risk conversation for user {user['email']}. Please review for professional follow-up."
         html = f"<div style='font-family:sans-serif'><h3>CampionAI professional handoff</h3><p>High-risk conversation detected for <b>{user['email']}</b>. Please review for follow-up.</p></div>"
-        presults = await alert_contact(prof.get("name", ""), prof.get("contact"), prof.get("phone"), subject, text, html)
+        presults = await alert_contact(prof.get("name", ""), prof.get("email") or prof.get("contact"), prof.get("phone"), subject, text, html)
         prof_notified = any(r.get("sent") for r in presults)
-        actions.append(summarize(presults, f"Professional ({prof.get('name')})"))
+        actions.append(summarize(presults, f"Doctor ({prof.get('name')})"))
 
     event = {
         "id": new_id(), "user_id": user["id"], "user_email": user["email"], "session_id": session_id,
@@ -409,9 +456,16 @@ async def _trigger_escalation(user, session_id, trigger_text):
         "triggered": True,
         "trusted_contact": tc,
         "trusted_contact_notified": tc_notified,
-        "professional": prof,
+        "professional": public_doctor(prof) if prof else None,
         "professional_notified": prof_notified,
         "hotlines": hotlines,
+        # A crisis consult is never capped and never gated on billing state.
+        "consult_offer": ({
+            "doctor_id": prof["id"],
+            "doctor_name": prof.get("name"),
+            "online_now": prof_online,
+            "free": True,
+        } if prof else None),
         "message": "You matter, and you don't have to go through this alone. I've surfaced people who can help right now.",
     }
 
@@ -495,7 +549,7 @@ async def delete_memory(memory_id: str, user=Depends(get_current_user)):
 # ---------------- Human handoff ----------------
 @api.post("/safety/handoff")
 async def request_handoff(user=Depends(get_current_user)):
-    prof = await db.professionals.find_one({"verified": True}, {"_id": 0})
+    prof, _prof_online = await _find_crisis_doctor(user)
     profile = user.get("profile", {})
     summary = {
         "preferred_name": profile.get("preferred_name"),
@@ -513,8 +567,8 @@ async def request_handoff(user=Depends(get_current_user)):
             f"<p><b>{profile.get('preferred_name') or user['email']}</b> requested to talk with a human and consented to share a summary.</p>"
             f"<p><b>Style:</b> {profile.get('communication_style','—')}<br/><b>Goals:</b> {', '.join(profile.get('goals', [])) or '—'}</p></div>"
         )
-        results = await alert_contact(prof.get("name", ""), prof.get("contact"), prof.get("phone"), subject, text, html)
-        actions.append(summarize(results, f"Professional ({prof.get('name')})"))
+        results = await alert_contact(prof.get("name", ""), prof.get("email") or prof.get("contact"), prof.get("phone"), subject, text, html)
+        actions.append(summarize(results, f"Doctor ({prof.get('name')})"))
     else:
         actions.append("Matched: pending")
     event = {
@@ -592,7 +646,9 @@ async def admin_stats(admin=Depends(get_admin_user)):
         "messages": await db.messages.count_documents({}),
         "memories": await db.memories.count_documents({}),
         "safety_events": await db.safety_events.count_documents({}),
-        "professionals": await db.professionals.count_documents({}),
+        "doctors": await db.doctors.count_documents({"status": "verified"}),
+        "doctors_pending": await db.doctors.count_documents({"status": "pending"}),
+        "consults": await db.consult_sessions.count_documents({"status": "completed"}),
         "open_safety_events": await db.safety_events.count_documents({"resolved": False}),
     }
 
@@ -652,27 +708,6 @@ async def admin_openrouter_models(admin=Depends(get_admin_user)):
         raise HTTPException(status_code=400, detail=f"Could not fetch OpenRouter models: {e}")
 
 
-@api.get("/admin/professionals")
-async def list_professionals(admin=Depends(get_admin_user)):
-    return await db.professionals.find({}, {"_id": 0}).sort("created_at", -1).to_list(500)
-
-
-@api.post("/admin/professionals")
-async def add_professional(inp: ProfessionalInput, admin=Depends(get_admin_user)):
-    doc = {"id": new_id(), **inp.model_dump(), "created_at": now_iso()}
-    await db.professionals.insert_one(dict(doc))
-    doc.pop("_id", None)
-    return doc
-
-
-@api.delete("/admin/professionals/{pid}")
-async def delete_professional(pid: str, admin=Depends(get_admin_user)):
-    res = await db.professionals.delete_one({"id": pid})
-    if res.deleted_count == 0:
-        raise HTTPException(status_code=404, detail="Professional not found")
-    return {"ok": True}
-
-
 @api.get("/admin/safety-events")
 async def admin_safety_events(admin=Depends(get_admin_user)):
     return await db.safety_events.find({}, {"_id": 0}).sort("created_at", -1).to_list(500)
@@ -716,17 +751,44 @@ async def integrations_status(admin=Depends(get_admin_user)):
         "email_resend": bool(os.environ.get("RESEND_API_KEY", "").strip()),
         "sms_twilio": bool(os.environ.get("TWILIO_ACCOUNT_SID", "").strip() and os.environ.get("TWILIO_AUTH_TOKEN", "").strip() and os.environ.get("TWILIO_FROM_NUMBER", "").strip()),
         "voice_fish": bool(fish_key),
+        "paypal": bool(os.environ.get("PAYPAL_CLIENT_ID", "").strip() and os.environ.get("PAYPAL_SECRET", "").strip()),
+        "paypal_webhook": bool(os.environ.get("PAYPAL_WEBHOOK_ID", "").strip()),
+        "paypal_plans": bool((await db.provider_settings.find_one({"id": "global"}, {"_id": 0}) or {}).get("paypal_plans")),
+        "kyc": bool(os.environ.get("KYC_API_KEY", "").strip()),
+        "turn": bool(os.environ.get("TURN_SECRET", "").strip()),
     }
 
 
 # ---------------- Uploads (object storage) ----------------
+MAX_UPLOAD_BYTES = 10 * 1024 * 1024
+
+
+def safe_ext(filename: str) -> str:
+    """Storage-key-safe extension. filename is attacker-controlled and may contain
+    slashes or dot-segments, which would escape the user's object-store prefix."""
+    raw = filename.rsplit(".", 1)[-1].lower() if "." in (filename or "") else ""
+    return re.sub(r"[^a-z0-9]", "", raw)[:8] or "bin"
+
+
+async def read_capped(file: UploadFile) -> bytes:
+    """Read an upload in chunks so an oversized body is rejected, not fully buffered."""
+    chunks, size = [], 0
+    while True:
+        chunk = await file.read(1024 * 1024)
+        if not chunk:
+            break
+        size += len(chunk)
+        if size > MAX_UPLOAD_BYTES:
+            raise HTTPException(status_code=400, detail="File too large (max 10MB)")
+        chunks.append(chunk)
+    return b"".join(chunks)
+
+
 @api.post("/upload")
 async def upload_file(file: UploadFile = File(...), user=Depends(get_current_user)):
-    ext = (file.filename.rsplit(".", 1)[-1].lower() if "." in (file.filename or "") else "bin")
+    ext = safe_ext(file.filename)
     content_type = file.content_type or MIME_TYPES.get(ext, "application/octet-stream")
-    data = await file.read()
-    if len(data) > 10 * 1024 * 1024:
-        raise HTTPException(status_code=400, detail="File too large (max 10MB)")
+    data = await read_capped(file)
     path = f"{APP_NAME}/uploads/{user['id']}/{new_id()}.{ext}"
     try:
         result = put_object(path, data, content_type)
@@ -747,9 +809,10 @@ async def upload_file(file: UploadFile = File(...), user=Depends(get_current_use
 async def serve_file(path: str, auth: str = Query(None)):
     if not auth:
         raise HTTPException(status_code=401, detail="Missing auth")
-    from auth import decode_token
-    uid = decode_token(auth)
-    record = await db.files.find_one({"storage_path": path, "user_id": uid, "is_deleted": False}, {"_id": 0})
+    # ponytail: token still arrives as a query param so <img src> works. It now honours
+    # revocation, but it still lands in access logs — swap for signed short-lived URLs.
+    user = await authenticate(auth)
+    record = await db.files.find_one({"storage_path": path, "user_id": user["id"], "is_deleted": False}, {"_id": 0})
     if not record:
         raise HTTPException(status_code=404, detail="File not found")
     try:
@@ -759,8 +822,9 @@ async def serve_file(path: str, auth: str = Query(None)):
     return Response(content=data, media_type=record.get("content_type", content_type))
 
 
-# ---------------- Payments (Stripe Flow B) ----------------
-STRIPE_API_KEY = os.environ.get("STRIPE_API_KEY", "sk_test_emergent")
+# ---------------- Payments (PayPal only) ----------------
+TRIAL_DAYS = 14
+RENEWAL_GRACE_DAYS = 2  # a late renewal webhook must not lock someone out mid-cycle
 
 PACKAGES = {
     "plus_monthly": {"amount": 9.0, "type": "subscription", "period_days": 30, "label": "CampionAI Plus · Monthly"},
@@ -770,79 +834,255 @@ PACKAGES = {
     "donate_30": {"amount": 30.0, "type": "donation", "label": "Champion"},
 }
 
-
-async def _grant_access(record):
-    """Idempotently grant Plus access / record donation once a transaction is paid."""
-    if record.get("granted"):
-        return
-    pkg = PACKAGES.get(record.get("package_id"))
-    is_sub = (pkg and pkg["type"] == "subscription")
-    if is_sub and record.get("user_id"):
-        user = await db.users.find_one({"id": record["user_id"]})
-        plus = (user or {}).get("plus", {}) or {}
-        base = datetime.now(timezone.utc)
-        cur = plus.get("until")
-        if cur:
-            try:
-                cur_dt = datetime.fromisoformat(cur)
-                if cur_dt > base:
-                    base = cur_dt
-            except Exception:
-                pass
-        period = pkg["period_days"]
-        until = base + timedelta(days=period)
-        await db.users.update_one({"id": record["user_id"]}, {"$set": {
-            "plus.status": "active", "plus.until": until.isoformat(),
-            "plus.last_payment": now_iso(), "plus.trial_used": True,
-        }})
-    elif record.get("type") == "donation" and not record.get("anonymous") and record.get("user_id"):
-        amount = float(record.get("amount", 0) or 0)
-        name = record.get("donor_name") or "A supporter"
-        avatar = f"https://ui-avatars.com/api/?name={name.replace(' ', '+')}&background=1a1a1c&color=fafafa&bold=true"
-        await db.donors.update_one(
-            {"user_id": record["user_id"]},
-            {"$inc": {"total": amount}, "$set": {"name": name, "avatar": avatar, "last_at": now_iso()}},
-            upsert=True,
-        )
-    await db.payment_transactions.update_one({"session_id": record["session_id"]}, {"$set": {"granted": True}})
+PLAN_KEY_ALIAS = {"monthly": "plus_monthly", "yearly": "plus_yearly"}
 
 
-@api.post("/payments/checkout")
-async def payments_checkout(inp: CheckoutInput, request: Request, user=Depends(get_current_user)):
-    pkg = PACKAGES.get(inp.package_id)
-    is_custom = inp.package_id == "donate_custom"
-    if not pkg and not is_custom:
-        raise HTTPException(status_code=400, detail="Unknown package")
-    if is_custom:
-        amount = round(float(inp.amount or 0), 2)
-        if amount < 1:
-            raise HTTPException(status_code=400, detail="Minimum donation is $1")
-        if amount > 10000:
-            raise HTTPException(status_code=400, detail="Maximum donation is $10,000")
-        ptype = "donation"
-    else:
-        amount = float(pkg["amount"])
-        ptype = pkg["type"]
-    host = str(request.base_url)
-    webhook_url = f"{host}api/webhook/stripe"
-    checkout = StripeCheckout(api_key=STRIPE_API_KEY, webhook_url=webhook_url)
-    success_url = f"{inp.origin_url}/payment/success?session_id={{CHECKOUT_SESSION_ID}}"
-    cancel_url = f"{inp.origin_url}/payment/cancel"
-    donor_name = (user.get("profile", {}) or {}).get("preferred_name") or user["email"].split("@")[0]
-    req = CheckoutSessionRequest(
-        amount=amount, currency="usd",
-        success_url=success_url, cancel_url=cancel_url,
-        metadata={"user_id": user["id"], "package_id": inp.package_id, "type": ptype},
+async def _paypal_plan_ids():
+    s = await db.provider_settings.find_one({"id": "global"}, {"_id": 0}) or {}
+    return s.get("paypal_plans") or {}
+
+
+@api.get("/pricing")
+async def pricing():
+    """Single source of truth for prices. The UI renders from this, so changing a
+    price never means editing the frontend."""
+    plans = await _paypal_plan_ids()
+    monthly = PACKAGES["plus_monthly"]["amount"]
+    yearly = PACKAGES["plus_yearly"]["amount"]
+    return {
+        "currency": "USD",
+        "paypal_client_id": os.environ.get("PAYPAL_CLIENT_ID", "").strip() or None,
+        "trial_days": TRIAL_DAYS,
+        "plans": [
+            {"id": "plus_monthly", "label": PACKAGES["plus_monthly"]["label"], "amount": monthly,
+             "per": "/mo", "note": "Billed monthly", "paypal_plan_id": plans.get("plus_monthly")},
+            {"id": "plus_yearly", "label": PACKAGES["plus_yearly"]["label"], "amount": yearly,
+             "per": "/yr", "note": f"Just ${yearly / 12:.2f}/mo · billed yearly", "featured": True,
+             "save": f"Save {round((1 - yearly / (monthly * 12)) * 100)}%",
+             "paypal_plan_id": plans.get("plus_yearly")},
+        ],
+        "donations": [{"id": k, "amount": v["amount"], "label": v["label"]}
+                      for k, v in PACKAGES.items() if v["type"] == "donation"],
+    }
+
+
+async def _claim_transaction(session_key: str):
+    """Atomically claim an unprocessed transaction.
+
+    Returns the doc if THIS caller won the claim, else None. The webhook and the
+    client confirm call routinely race here; whoever loses must do nothing.
+    """
+    return await db.payment_transactions.find_one_and_update(
+        {"session_id": session_key, "granted": {"$ne": True}},
+        {"$set": {"granted": True, "status": "completed", "payment_status": "paid", "updated_at": now_iso()}},
+        return_document=ReturnDocument.AFTER,
     )
-    session = await checkout.create_checkout_session(req)
+
+
+async def _record_donation(record):
+    if record.get("anonymous") or not record.get("user_id"):
+        return
+    amount = float(record.get("amount", 0) or 0)
+    name = record.get("donor_name") or "A supporter"
+    avatar = f"https://ui-avatars.com/api/?name={name.replace(' ', '+')}&background=1a1a1c&color=fafafa&bold=true"
+    await db.donors.update_one(
+        {"user_id": record["user_id"]},
+        {"$inc": {"total": amount}, "$set": {"name": name, "avatar": avatar, "last_at": now_iso()}},
+        upsert=True,
+    )
+
+
+# ---------------- Subscription lifecycle ----------------
+PAYPAL_ACTIVE = ("ACTIVE", "APPROVED")
+
+
+async def _sync_subscription(user_id: str, subscription_id: str, plan_key: str, sub=None):
+    """Mirror PayPal's subscription record onto the user. PayPal is the authority for
+    status and renewal date — the app no longer computes a period itself."""
+    sub = sub if sub is not None else await paypal_get_subscription(subscription_id)
+    if not sub:
+        return None
+    status = (sub.get("status") or "").upper()
+    billing = sub.get("billing_info") or {}
+    pkg = PACKAGES.get(plan_key, PACKAGES["plus_monthly"])
+
+    user = await db.users.find_one({"id": user_id}, {"_id": 0, "plus": 1}) or {}
+    current_until = (user.get("plus") or {}).get("until")
+
+    until = None
+    if status in PAYPAL_ACTIVE:
+        next_billing = billing.get("next_billing_time")
+        if next_billing:
+            try:
+                until = (datetime.fromisoformat(next_billing.replace("Z", "+00:00"))
+                         + timedelta(days=RENEWAL_GRACE_DAYS)).isoformat()
+            except Exception:
+                until = None
+        if not until:
+            until = (datetime.now(timezone.utc) + timedelta(days=pkg["period_days"])).isoformat()
+        app_status = "active"
+    elif status == "SUSPENDED":
+        app_status = "past_due"
+        until = current_until  # keep access while they fix the payment method
+    elif status in ("CANCELLED", "EXPIRED"):
+        app_status = "cancelled"
+        until = current_until  # already paid through the current period
+    else:
+        app_status = "pending"
+        until = current_until
+
+    await db.users.update_one({"id": user_id}, {"$set": {
+        "plus.status": app_status,
+        "plus.until": until,
+        "plus.paypal_subscription_id": subscription_id,
+        "plus.plan_key": plan_key,
+        "plus.paypal_status": status,
+        "plus.trial_used": True,
+        "plus.last_synced": now_iso(),
+    }})
+    return app_status
+
+
+@api.post("/paypal/activate")
+async def paypal_activate(inp: PaypalActivate, user=Depends(get_current_user)):
+    """Fast-path confirm right after the PayPal button approves, so the UI updates
+    without waiting for the webhook. The webhook remains the authority."""
+    plan_key = PLAN_KEY_ALIAS.get(inp.plan_key, inp.plan_key)
+    if plan_key not in ("plus_monthly", "plus_yearly"):
+        raise HTTPException(status_code=400, detail="Unknown plan")
+    try:
+        sub = await paypal_get_subscription(inp.subscription_id)
+    except Exception as e:
+        logger.error(f"paypal verify error: {e}")
+        raise HTTPException(status_code=400, detail="Could not verify PayPal subscription")
+    if sub is None:
+        raise HTTPException(status_code=400, detail="PayPal is not configured")
+    if (sub.get("status") or "").upper() not in PAYPAL_ACTIVE:
+        raise HTTPException(status_code=400, detail=f"Subscription not active ({sub.get('status')})")
+
+    session_key = f"paypal-sub-{inp.subscription_id}"
+    existing = await db.payment_transactions.find_one({"session_id": session_key}, {"_id": 0})
+    if not existing:
+        await db.payment_transactions.insert_one({
+            "session_id": session_key, "user_id": user["id"], "package_id": plan_key,
+            "amount": float(PACKAGES[plan_key]["amount"]), "currency": "usd", "type": "subscription",
+            "provider": "paypal", "paypal_subscription_id": inp.subscription_id,
+            "status": "completed", "payment_status": "paid", "granted": True,
+            "description": PACKAGES[plan_key]["label"],
+            "created_at": now_iso(), "updated_at": now_iso(),
+        })
+    await _sync_subscription(user["id"], inp.subscription_id, plan_key, sub=sub)
+    fresh = await db.users.find_one({"id": user["id"]})
+    return _plus_state(fresh)
+
+
+@api.post("/plus/cancel")
+async def plus_cancel(user=Depends(get_current_user)):
+    """Cancels at PayPal immediately; app access continues to the paid-through date."""
+    plus = user.get("plus", {}) or {}
+    sub_id = plus.get("paypal_subscription_id")
+    if not sub_id:
+        raise HTTPException(status_code=400, detail="No active subscription to cancel")
+    try:
+        await paypal_cancel_subscription(sub_id, "Cancelled from CampionAI")
+    except Exception as e:
+        logger.error(f"paypal cancel failed: {e}")
+        raise HTTPException(status_code=502, detail="Could not cancel with PayPal — please try again")
+    await db.users.update_one({"id": user["id"]}, {"$set": {
+        "plus.status": "cancelled", "plus.cancel_at_period_end": True, "plus.paypal_status": "CANCELLED",
+    }})
+    fresh = await db.users.find_one({"id": user["id"]})
+    return _plus_state(fresh)
+
+
+@api.post("/plus/resume")
+async def plus_resume(user=Depends(get_current_user)):
+    """Only a SUSPENDED subscription can be resumed. A cancelled one is gone at PayPal
+    and needs a fresh subscription — say so rather than pretending."""
+    plus = user.get("plus", {}) or {}
+    sub_id = plus.get("paypal_subscription_id")
+    if not sub_id:
+        raise HTTPException(status_code=400, detail="No subscription found")
+    sub = await paypal_get_subscription(sub_id)
+    if not sub:
+        raise HTTPException(status_code=400, detail="PayPal is not configured")
+    if (sub.get("status") or "").upper() != "SUSPENDED":
+        raise HTTPException(status_code=400, detail="This subscription cannot be resumed — please subscribe again")
+    await paypal_activate_subscription(sub_id)
+    await _sync_subscription(user["id"], sub_id, plus.get("plan_key", "plus_monthly"))
+    fresh = await db.users.find_one({"id": user["id"]})
+    return _plus_state(fresh)
+
+
+@api.get("/plus/billing")
+async def plus_billing(user=Depends(get_current_user)):
+    """Local ledger, enriched with PayPal's own transaction list when available."""
+    local = await db.payment_transactions.find(
+        {"user_id": user["id"]}, {"_id": 0}
+    ).sort("created_at", -1).to_list(100)
+
+    remote = []
+    sub_id = (user.get("plus", {}) or {}).get("paypal_subscription_id")
+    if sub_id:
+        try:
+            end = datetime.now(timezone.utc)
+            start = end - timedelta(days=365 * 3)
+            for t in await paypal_subscription_transactions(
+                sub_id, start.strftime("%Y-%m-%dT%H:%M:%SZ"), end.strftime("%Y-%m-%dT%H:%M:%SZ")
+            ):
+                amt = (t.get("amount_with_breakdown") or {}).get("gross_amount") or {}
+                remote.append({
+                    "id": t.get("id"), "date": t.get("time"), "status": t.get("status"),
+                    "amount": float(amt.get("value", 0) or 0), "currency": amt.get("currency_code", "USD"),
+                    "description": "Subscription payment",
+                })
+        except Exception as e:
+            logger.error(f"paypal transactions failed: {e}")
+
+    return {"plus": _plus_state(user), "payments": local, "paypal_payments": remote}
+
+
+# ---------------- Donations (PayPal Orders) ----------------
+@api.post("/donations/order")
+async def donation_order(inp: DonationOrder, user=Depends(get_current_user)):
+    amount = round(float(inp.amount), 2)
+    donor_name = (user.get("profile", {}) or {}).get("preferred_name") or user["email"].split("@")[0]
+    try:
+        order = await paypal_create_order(amount, "Donation to CampionAI", custom_id=user["id"])
+    except Exception as e:
+        logger.error(f"paypal order failed: {e}")
+        raise HTTPException(status_code=502, detail="Could not start the donation")
+    if not order:
+        raise HTTPException(status_code=400, detail="PayPal is not configured")
     await db.payment_transactions.insert_one({
-        "session_id": session.session_id, "user_id": user["id"], "package_id": inp.package_id,
-        "amount": amount, "currency": "usd", "type": ptype,
+        "session_id": f"paypal-order-{order['id']}", "user_id": user["id"], "package_id": "donation",
+        "amount": amount, "currency": "usd", "type": "donation", "provider": "paypal",
         "anonymous": bool(inp.anonymous), "donor_name": donor_name,
-        "status": "initiated", "payment_status": "pending", "granted": False,
+        "description": "Donation", "status": "initiated", "payment_status": "pending", "granted": False,
         "created_at": now_iso(), "updated_at": now_iso(),
     })
-    return {"checkout_url": session.url, "session_id": session.session_id}
+    return {"order_id": order["id"]}
+
+
+@api.post("/donations/capture/{order_id}")
+async def donation_capture(order_id: str, user=Depends(get_current_user)):
+    session_key = f"paypal-order-{order_id}"
+    record = await db.payment_transactions.find_one({"session_id": session_key}, {"_id": 0})
+    if not record:
+        raise HTTPException(status_code=404, detail="Order not found")
+    if record.get("user_id") != user["id"]:
+        raise HTTPException(status_code=403, detail="Not your order")
+    try:
+        captured = await paypal_capture_order(order_id)
+    except Exception as e:
+        logger.error(f"paypal capture failed: {e}")
+        raise HTTPException(status_code=502, detail="Could not complete the donation")
+    if (captured or {}).get("status") != "COMPLETED":
+        raise HTTPException(status_code=400, detail="Payment was not completed")
+    claimed = await _claim_transaction(session_key)
+    if claimed:
+        await _record_donation(claimed)
+    return {"ok": True, "amount": record["amount"]}
 
 
 @api.get("/donors/top")
@@ -851,81 +1091,85 @@ async def top_donors():
     return [{"name": d.get("name"), "avatar": d.get("avatar"), "total": round(d.get("total", 0), 2)} for d in donors]
 
 
-@api.post("/paypal/activate")
-async def paypal_activate(inp: PaypalActivate, user=Depends(get_current_user)):
-    plan_key = "plus_yearly" if inp.plan_key == "yearly" else "plus_monthly"
-    pkg = PACKAGES[plan_key]
-    # Verify server-side when PayPal creds are configured
-    try:
-        sub = await paypal_get_subscription(inp.subscription_id)
-    except Exception as e:
-        logger.error(f"paypal verify error: {e}")
-        raise HTTPException(status_code=400, detail="Could not verify PayPal subscription")
-    if sub is None:
-        raise HTTPException(status_code=400, detail="PayPal is not configured")
-    if sub.get("status") not in ("ACTIVE", "APPROVED"):
-        raise HTTPException(status_code=400, detail=f"Subscription not active ({sub.get('status')})")
-    session_key = f"paypal-{inp.subscription_id}"
-    existing = await db.payment_transactions.find_one({"session_id": session_key}, {"_id": 0})
-    if not existing:
-        tx = {
-            "session_id": session_key, "user_id": user["id"], "package_id": plan_key,
-            "amount": float(pkg["amount"]), "currency": "usd", "type": "subscription",
-            "provider": "paypal", "paypal_subscription_id": inp.subscription_id,
-            "status": "completed", "payment_status": "paid", "granted": False,
-            "created_at": now_iso(), "updated_at": now_iso(),
-        }
-        await db.payment_transactions.insert_one(dict(tx))
-        existing = tx
-    await _grant_access(existing)
-    fresh = await db.users.find_one({"id": user["id"]})
-    return _plus_state(fresh)
+# ---------------- PayPal webhook (the authority) ----------------
+SUB_EVENTS = {
+    "BILLING.SUBSCRIPTION.ACTIVATED", "BILLING.SUBSCRIPTION.RE-ACTIVATED",
+    "BILLING.SUBSCRIPTION.CANCELLED", "BILLING.SUBSCRIPTION.SUSPENDED",
+    "BILLING.SUBSCRIPTION.EXPIRED", "BILLING.SUBSCRIPTION.UPDATED",
+}
 
 
-@api.get("/payments/status/{session_id}")
-async def payments_status(session_id: str, request: Request, user=Depends(get_current_user)):
-    record = await db.payment_transactions.find_one({"session_id": session_id}, {"_id": 0})
-    if not record:
-        raise HTTPException(status_code=404, detail="Transaction not found")
-    if record.get("user_id") != user["id"]:
-        raise HTTPException(status_code=403, detail="Not your transaction")
-    if record.get("payment_status") != "paid":
-        try:
-            host = str(request.base_url)
-            checkout = StripeCheckout(api_key=STRIPE_API_KEY, webhook_url=f"{host}api/webhook/stripe")
-            status = await checkout.get_checkout_status(session_id)
-            if status.payment_status == "paid" or status.status == "complete":
-                await db.payment_transactions.update_one(
-                    {"session_id": session_id, "payment_status": {"$ne": "paid"}},
-                    {"$set": {"status": "completed", "payment_status": "paid", "updated_at": now_iso()}},
-                )
-                record = await db.payment_transactions.find_one({"session_id": session_id}, {"_id": 0})
-                await _grant_access(record)
-                record = await db.payment_transactions.find_one({"session_id": session_id}, {"_id": 0})
-        except Exception as e:
-            logger.error(f"stripe status error: {e}")
-    return {"session_id": record["session_id"], "status": record["status"], "payment_status": record["payment_status"], "type": record.get("type")}
-
-
-@api.post("/webhook/stripe")
-async def stripe_webhook(request: Request):
+@api.post("/webhook/paypal")
+async def paypal_webhook(request: Request):
     body = await request.body()
-    sig = request.headers.get("Stripe-Signature", "")
+    if not await paypal_verify_webhook(request.headers, body):
+        raise HTTPException(status_code=400, detail="Invalid webhook signature")
     try:
-        host = str(request.base_url)
-        checkout = StripeCheckout(api_key=STRIPE_API_KEY, webhook_url=f"{host}api/webhook/stripe")
-        resp = await checkout.handle_webhook(body, sig)
-    except Exception as e:
-        logger.error(f"webhook error: {e}")
-        raise HTTPException(status_code=400, detail="Invalid webhook")
-    if resp.payment_status == "paid":
-        await db.payment_transactions.update_one(
-            {"session_id": resp.session_id, "payment_status": {"$ne": "paid"}},
-            {"$set": {"status": "completed", "payment_status": "paid", "updated_at": now_iso()}},
+        event = json.loads(body)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Malformed webhook")
+
+    etype = event.get("event_type", "")
+    resource = event.get("resource", {}) or {}
+    logger.info(f"paypal webhook: {etype}")
+
+    # Replay guard — PayPal retries, and a retried ACTIVATED must not re-grant.
+    event_id = event.get("id")
+    if event_id:
+        seen = await db.webhook_events.find_one_and_update(
+            {"id": event_id},
+            {"$setOnInsert": {"id": event_id, "type": etype, "received_at": now_iso()}},
+            upsert=True, return_document=ReturnDocument.BEFORE,
         )
-        record = await db.payment_transactions.find_one({"session_id": resp.session_id}, {"_id": 0})
-        if record:
-            await _grant_access(record)
+        if seen:
+            return {"status": "duplicate"}
+
+    if etype in SUB_EVENTS:
+        sub_id = resource.get("id")
+        if sub_id:
+            tx = await db.payment_transactions.find_one({"paypal_subscription_id": sub_id}, {"_id": 0})
+            if tx and tx.get("user_id"):
+                await _sync_subscription(tx["user_id"], sub_id, tx.get("package_id", "plus_monthly"), sub=resource)
+            else:
+                logger.warning(f"webhook for unknown subscription {sub_id}")
+
+    elif etype == "PAYMENT.SALE.COMPLETED":
+        sub_id = resource.get("billing_agreement_id")
+        if sub_id:
+            tx = await db.payment_transactions.find_one({"paypal_subscription_id": sub_id}, {"_id": 0})
+            if tx and tx.get("user_id"):
+                plan_key = tx.get("package_id", "plus_monthly")
+                amount = float((resource.get("amount") or {}).get("total", 0) or 0)
+                sale_key = f"paypal-sale-{resource.get('id')}"
+                await db.payment_transactions.update_one(
+                    {"session_id": sale_key},
+                    {"$setOnInsert": {
+                        "session_id": sale_key, "user_id": tx["user_id"], "package_id": plan_key,
+                        "amount": amount, "currency": "usd", "type": "subscription", "provider": "paypal",
+                        "paypal_subscription_id": sub_id, "description": "Subscription renewal",
+                        "status": "completed", "payment_status": "paid", "granted": True,
+                        "created_at": now_iso(), "updated_at": now_iso(),
+                    }}, upsert=True,
+                )
+                # Re-read from PayPal so `until` tracks the real next billing date.
+                await _sync_subscription(tx["user_id"], sub_id, plan_key)
+
+    elif etype == "BILLING.SUBSCRIPTION.PAYMENT.FAILED":
+        sub_id = resource.get("id")
+        tx = await db.payment_transactions.find_one({"paypal_subscription_id": sub_id}, {"_id": 0}) if sub_id else None
+        if tx and tx.get("user_id"):
+            await db.users.update_one({"id": tx["user_id"]}, {"$set": {"plus.status": "past_due"}})
+            u = await db.users.find_one({"id": tx["user_id"]}, {"_id": 0, "email": 1, "profile": 1})
+            if u:
+                name = (u.get("profile") or {}).get("preferred_name") or "there"
+                await alert_contact(
+                    name, u.get("email"), None,
+                    "CampionAI Plus — payment issue",
+                    "We could not process your latest CampionAI Plus payment. Please update your payment method in PayPal to keep your plan active.",
+                    "<div style='font-family:sans-serif;line-height:1.6'><h3>Payment issue</h3>"
+                    "<p>We could not process your latest CampionAI Plus payment. Update your payment method in PayPal to keep your plan active.</p></div>",
+                )
+
     return {"status": "ok"}
 
 
@@ -948,7 +1192,14 @@ def _plus_state(user):
                 active, status = True, "trialing"
         except Exception:
             pass
-    return {"active": active, "status": status, "until": until, "trial_ends_at": trial_ends, "trial_used": plus.get("trial_used", False)}
+    return {
+        "active": active, "status": status, "until": until,
+        "trial_ends_at": trial_ends, "trial_used": plus.get("trial_used", False),
+        "plan_key": plus.get("plan_key"),
+        "paypal_status": plus.get("paypal_status"),
+        "cancel_at_period_end": plus.get("cancel_at_period_end", False),
+        "has_subscription": bool(plus.get("paypal_subscription_id")),
+    }
 
 
 @api.get("/plus/status")
@@ -961,7 +1212,7 @@ async def start_trial(user=Depends(get_current_user)):
     plus = user.get("plus", {}) or {}
     if plus.get("trial_used") or plus.get("until"):
         raise HTTPException(status_code=400, detail="Trial already used")
-    trial_ends = (datetime.now(timezone.utc) + timedelta(days=14)).isoformat()
+    trial_ends = (datetime.now(timezone.utc) + timedelta(days=TRIAL_DAYS)).isoformat()
     await db.users.update_one({"id": user["id"]}, {"$set": {
         "plus.status": "trialing", "plus.trial_ends_at": trial_ends, "plus.trial_used": True,
     }})
@@ -1122,6 +1373,14 @@ async def root():
     return {"service": "CampionAI", "status": "ok"}
 
 
+# ---------------- Doctor consultation system ----------------
+api.include_router(doctors_router(db, get_current_user, get_admin_user, get_doctor_user))
+api.include_router(consults_router(
+    db, get_current_user, get_doctor_user, _plus_state,
+    paypal_create_order, paypal_capture_order, _claim_transaction,
+))
+api.include_router(signaling_router(db, get_current_user, authenticate))
+
 app.include_router(api)
 app.add_middleware(
     CORSMiddleware,
@@ -1132,8 +1391,64 @@ app.add_middleware(
 )
 
 
+INDEXES = [
+    ("users", [("email", 1)], {"unique": True}),
+    ("users", [("id", 1)], {"unique": True}),
+    ("sessions", [("user_id", 1), ("updated_at", -1)], {}),
+    ("messages", [("session_id", 1), ("created_at", -1)], {}),
+    ("messages", [("user_id", 1), ("created_at", -1)], {}),
+    ("memories", [("user_id", 1), ("tier", 1), ("importance", -1)], {}),
+    ("files", [("storage_path", 1), ("user_id", 1)], {}),
+    ("safety_events", [("user_id", 1), ("created_at", -1)], {}),
+    ("payment_transactions", [("session_id", 1)], {"unique": True}),
+    ("payment_transactions", [("user_id", 1), ("created_at", -1)], {}),
+    # Doctor consultation system
+    ("doctors", [("user_id", 1)], {"unique": True, "sparse": True}),
+    ("doctors", [("status", 1), ("country", 1), ("languages", 1), ("is_online", -1)], {}),
+    ("doctor_availability", [("doctor_id", 1), ("weekday", 1)], {}),
+    ("consult_sessions", [("user_id", 1), ("created_at", -1)], {}),
+    ("consult_sessions", [("doctor_id", 1), ("status", 1)], {}),
+    ("consult_sessions", [("status", 1), ("scheduled_at", 1)], {}),
+    ("consult_messages", [("session_id", 1), ("created_at", 1)], {}),
+    ("doctor_ratings", [("session_id", 1)], {"unique": True}),
+    ("doctor_ratings", [("doctor_id", 1), ("created_at", -1)], {}),
+    ("doctor_payouts", [("doctor_id", 1), ("created_at", -1)], {}),
+]
+
+
+async def ensure_indexes():
+    """Every query in this app filters by user_id/doctor_id/session_id. Without these
+    Mongo collection-scans each one."""
+    for coll, keys, opts in INDEXES:
+        try:
+            await db[coll].create_index(keys, **opts)
+        except Exception as e:
+            # A unique index over pre-existing duplicates fails; log rather than block boot.
+            logger.warning(f"index {coll}{keys} skipped: {str(e)[:120]}")
+
+
+async def ensure_paypal_plans():
+    """Create the billing plans once, then cache their ids. Idempotent — subsequent
+    boots find the existing plans rather than creating duplicates."""
+    settings = await db.provider_settings.find_one({"id": "global"}, {"_id": 0}) or {}
+    if settings.get("paypal_plans"):
+        return
+    try:
+        plans = await paypal_ensure_plans()
+    except Exception as e:
+        logger.error(f"paypal plan setup failed: {e}")
+        return
+    if plans:
+        await db.provider_settings.update_one({"id": "global"}, {"$set": {"paypal_plans": plans}}, upsert=True)
+        logger.info(f"PayPal plans ready: {list(plans)}")
+    else:
+        logger.warning("PayPal not configured — subscriptions are unavailable until credentials are set")
+
+
 @app.on_event("startup")
 async def seed():
+    await ensure_indexes()
+    await ensure_paypal_plans()
     try:
         init_storage()
         logger.info("Object storage initialized")
@@ -1142,8 +1457,8 @@ async def seed():
     admin_email = "admin@campionai.com"
     if not await db.users.find_one({"email": admin_email}):
         await db.users.insert_one({
-            "id": new_id(), "email": admin_email, "password_hash": hash_password("Admin@12345"),
-            "is_admin": True, "onboarded": True, "private_mode": False,
+            "id": new_id(), "email": admin_email, "password_hash": hash_password(os.environ.get("ADMIN_PASSWORD", "Admin@12345")),
+            "is_admin": True, "role": "admin", "token_version": 0, "onboarded": True, "private_mode": False,
             "profile": {"preferred_name": "Admin", "likes": [], "important_people": [], "goals": [],
                          "communication_style": "warm"},
             "trusted_contact": {"name": "Ops", "relationship": "team", "phone": "", "email": ""},
@@ -1151,13 +1466,9 @@ async def seed():
             "country": "US", "checkin_frequency": "off", "last_checkin": None, "created_at": now_iso(),
         })
         logger.info("Seeded admin user")
-    if await db.professionals.count_documents({}) == 0:
-        await db.professionals.insert_one({
-            "id": new_id(), "name": "Dr. Maya Reyes", "credentials": "Licensed Clinical Psychologist (PsyD)",
-            "specialty": "Crisis support & anxiety", "contact": "maya.reyes@campionai-verified.org",
-            "verified": True, "availability": "on-call", "created_at": now_iso(),
-        })
-        logger.info("Seeded verified professional")
+    # No professional is seeded. The crisis path routes to real verified doctors only
+    # (db.doctors); a fictional "verified" clinician backing a live escalation is worse
+    # than none, because the escalation UI reports on it.
 
 
 @app.on_event("shutdown")

@@ -9,7 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
 import { toast } from "@/components/ui/sonner";
-import { Download, LogOut, Loader2 } from "lucide-react";
+import { Download, Loader2 } from "lucide-react";
 
 export default function SettingsDialog({ open, onOpenChange }) {
   const { user, refresh, logout } = useAuth();
@@ -92,11 +92,7 @@ export default function SettingsDialog({ open, onOpenChange }) {
               <div><p className="text-sm font-medium">Export my data</p><p className="text-xs text-muted-foreground">Download everything as JSON</p></div>
             </button>
 
-            <button onClick={() => { logout(); navigate("/"); }} data-testid="logout-button"
-              className="w-full flex items-center gap-3 rounded-2xl border border-border/60 p-4 hover:bg-accent transition-colors text-left">
-              <LogOut className="h-5 w-5 text-muted-foreground" />
-              <div><p className="text-sm font-medium">Sign out</p></div>
-            </button>
+            {/* Sign out lives in AccountMenu — one logout control, reachable from every page. */}
 
             <AlertDialog>
               <AlertDialogTrigger asChild>

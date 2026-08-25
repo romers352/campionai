@@ -1,36 +1,41 @@
 import React, { useEffect, useState } from "react";
-import { useNavigate, useLocation, Link } from "react-router-dom";
+import { useNavigate, Link } from "react-router-dom";
 import { motion } from "framer-motion";
 import { api } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
 import { Button } from "@/components/ui/button";
-import { CheckCircle2, XCircle, Loader2, Heart } from "lucide-react";
+import { CheckCircle2, XCircle, Loader2 } from "lucide-react";
 
+/**
+ * PayPal Buttons complete in-page, so these are landing pages for the redirect
+ * flows only (and anyone who bookmarks them). The webhook is what actually grants
+ * access — here we just re-read our own state until it lands.
+ */
 export function PaymentSuccess() {
   const navigate = useNavigate();
   const { refresh } = useAuth();
-  const [state, setState] = useState("checking"); // checking | paid | donation | timeout
-  const [type, setType] = useState(null);
+  const [state, setState] = useState("checking"); // checking | paid | pending
 
   useEffect(() => {
-    const sid = new URLSearchParams(window.location.search).get("session_id");
-    if (!sid) { setState("timeout"); return; }
+    let cancelled = false;
     let attempts = 0;
     const poll = async () => {
       attempts += 1;
       try {
-        const { data } = await api.get(`/payments/status/${sid}`);
-        setType(data.type);
-        if (data.payment_status === "paid") {
+        const { data } = await api.get("/plus/status");
+        if (cancelled) return;
+        if (data.active) {
           await refresh();
-          setState(data.type === "donation" ? "donation" : "paid");
+          setState("paid");
           return;
         }
-      } catch {}
-      if (attempts >= 6) { setState("timeout"); return; }
+      } catch { /* keep polling */ }
+      if (cancelled) return;
+      if (attempts >= 6) { setState("pending"); return; }
       setTimeout(poll, 2000);
     };
     poll();
+    return () => { cancelled = true; };
   }, [refresh]);
 
   return (
@@ -50,19 +55,11 @@ export function PaymentSuccess() {
             <Button className="rounded-full bg-primary text-primary-foreground hover:bg-zinc-200" onClick={() => navigate("/wellness")} data-testid="go-wellness-button">Open my plan</Button>
           </>
         )}
-        {state === "donation" && (
-          <>
-            <Heart className="h-12 w-12 text-primary mx-auto mb-6" strokeWidth={1.2} />
-            <h1 className="font-display font-light text-4xl tracking-tight mb-3">Thank you, truly.</h1>
-            <p className="text-muted-foreground mb-8">Your support helps keep CampionAI free for people who need it.</p>
-            <Button className="rounded-full bg-primary text-primary-foreground hover:bg-zinc-200" onClick={() => navigate("/chat")}>Back to chat</Button>
-          </>
-        )}
-        {state === "timeout" && (
+        {state === "pending" && (
           <>
             <p className="font-display font-light text-2xl mb-3">Still processing…</p>
-            <p className="text-muted-foreground mb-8">This can take a moment. You can check your plan shortly.</p>
-            <Button variant="outline" className="rounded-full border-border" onClick={() => navigate("/wellness")}>Go to Plus</Button>
+            <p className="text-muted-foreground mb-8">PayPal can take a moment to confirm. Your plan will unlock automatically.</p>
+            <Button variant="outline" className="rounded-full border-border" onClick={() => navigate("/billing")}>Check billing</Button>
           </>
         )}
       </motion.div>

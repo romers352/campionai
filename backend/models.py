@@ -15,8 +15,9 @@ def new_id() -> str:
 # ---------- Auth ----------
 class RegisterInput(BaseModel):
     email: EmailStr
-    password: str
+    password: str = Field(min_length=8, max_length=200)
     preferred_name: Optional[str] = None
+    as_doctor: bool = False
 
 
 class LoginInput(BaseModel):
@@ -147,3 +148,84 @@ class PlanItemToggle(BaseModel):
 class PaypalActivate(BaseModel):
     subscription_id: str
     plan_key: str  # "monthly" | "yearly"
+
+
+class DonationOrder(BaseModel):
+    amount: float = Field(ge=1, le=10000)
+    anonymous: bool = False
+
+
+# ---------- Doctors ----------
+class DoctorApply(BaseModel):
+    name: str = Field(min_length=2, max_length=120)
+    credentials: str = Field(min_length=2, max_length=200)
+    licence_number: str = Field(min_length=2, max_length=80)
+    specialty: str = Field(max_length=200)
+    languages: List[str] = Field(default_factory=lambda: ["en"], max_length=10)
+    country: str = Field(min_length=2, max_length=2)
+    bio: Optional[str] = Field(default=None, max_length=2000)
+    is_volunteer: bool = False
+    session_price: float = Field(default=0, ge=0, le=1000)
+    licence_doc_path: Optional[str] = None
+    photo_path: Optional[str] = None
+
+
+class DoctorProfileUpdate(BaseModel):
+    specialty: Optional[str] = Field(default=None, max_length=200)
+    languages: Optional[List[str]] = Field(default=None, max_length=10)
+    bio: Optional[str] = Field(default=None, max_length=2000)
+    is_volunteer: Optional[bool] = None
+    session_price: Optional[float] = Field(default=None, ge=0, le=1000)
+    photo_path: Optional[str] = None
+
+
+class DoctorStatusUpdate(BaseModel):
+    status: str  # verified | rejected | suspended | pending
+    reason: Optional[str] = Field(default=None, max_length=500)
+
+
+class OnlineToggle(BaseModel):
+    is_online: bool
+
+
+class AvailabilityInput(BaseModel):
+    weekday: int = Field(ge=0, le=6)  # 0 = Monday
+    start: str  # "09:00"
+    end: str    # "17:00"
+    timezone: str = "UTC"
+
+
+# ---------- Consultations ----------
+class ConsultBook(BaseModel):
+    doctor_id: str
+    scheduled_at: str          # ISO8601 UTC
+    mode: str = "video"        # video | audio | chat
+    note: Optional[str] = Field(default=None, max_length=1000)
+
+
+class ConsultRequest(BaseModel):
+    """Instant 'talk now'. doctor_id optional — omit to broadcast to any matching doctor.
+
+    `crisis` is a request, not a claim: the server only honours it when it can find a
+    recent high-risk safety event for this user. Otherwise anyone could set the flag
+    and walk past the free-session cap.
+    """
+    doctor_id: Optional[str] = None
+    mode: str = "video"
+    note: Optional[str] = Field(default=None, max_length=1000)
+    crisis: bool = False
+
+
+class ConsultRate(BaseModel):
+    stars: int = Field(ge=1, le=5)
+    comment: Optional[str] = Field(default=None, max_length=1000)
+
+
+class PayoutSettle(BaseModel):
+    doctor_id: str
+    note: Optional[str] = Field(default=None, max_length=500)
+
+
+class ConsultSettings(BaseModel):
+    commission_pct: float = Field(default=15, ge=0, le=100)
+    free_volunteer_sessions_per_month: int = Field(default=2, ge=0, le=100)

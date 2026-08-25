@@ -8,6 +8,12 @@ import Onboarding from "@/pages/Onboarding";
 import Chat from "@/pages/Chat";
 import Admin from "@/pages/Admin";
 import Wellness from "@/pages/Wellness";
+import Billing from "@/pages/Billing";
+import Doctors from "@/pages/Doctors";
+import MyConsults from "@/pages/MyConsults";
+import ConsultRoom from "@/pages/ConsultRoom";
+import DoctorApply from "@/pages/DoctorApply";
+import DoctorDashboard from "@/pages/DoctorDashboard";
 import { PaymentSuccess, PaymentCancel } from "@/pages/PaymentReturn";
 import { Loader2 } from "lucide-react";
 
@@ -23,9 +29,26 @@ function Protected({ children, adminOnly }) {
   const { user, loading } = useAuth();
   if (loading) return <FullLoader />;
   if (!user) return <Navigate to="/auth" replace />;
-  if (!user.onboarded && !user.is_admin) return <Navigate to="/onboarding" replace />;
+  // Doctors skip patient onboarding — they have their own application flow.
+  if (!user.onboarded && !user.is_admin && user.role !== "doctor") return <Navigate to="/onboarding" replace />;
   if (adminOnly && !user.is_admin) return <Navigate to="/chat" replace />;
   return children;
+}
+
+/** Doctor-only. Applicants who aren't verified yet land on the application page,
+ *  which is where their status and next step live. */
+function DoctorOnly({ children }) {
+  const { user, loading } = useAuth();
+  if (loading) return <FullLoader />;
+  if (!user) return <Navigate to="/auth" replace />;
+  if (user.role !== "doctor") return <Navigate to="/doctor/apply" replace />;
+  return children;
+}
+
+function homeFor(user) {
+  if (user.is_admin) return "/admin";
+  if (user.role === "doctor") return "/doctor";
+  return "/chat";
 }
 
 export default function App() {
@@ -34,11 +57,23 @@ export default function App() {
     <div className="App grain">
       <BrowserRouter>
         <Routes>
-          <Route path="/" element={loading ? <FullLoader /> : user ? <Navigate to={user.is_admin ? "/admin" : "/chat"} replace /> : <Landing />} />
-          <Route path="/auth" element={user ? <Navigate to={user.is_admin ? "/admin" : "/chat"} replace /> : <Auth />} />
+          <Route path="/" element={loading ? <FullLoader /> : user ? <Navigate to={homeFor(user)} replace /> : <Landing />} />
+          <Route path="/auth" element={user ? <Navigate to={homeFor(user)} replace /> : <Auth />} />
           <Route path="/onboarding" element={<Onboarding />} />
+
           <Route path="/chat" element={<Protected><Chat /></Protected>} />
           <Route path="/wellness" element={<Protected><Wellness /></Protected>} />
+          <Route path="/billing" element={<Protected><Billing /></Protected>} />
+
+          {/* Human consultations */}
+          <Route path="/doctors" element={<Protected><Doctors /></Protected>} />
+          <Route path="/consults" element={<Protected><MyConsults /></Protected>} />
+          <Route path="/consult/:sessionId" element={<Protected><ConsultRoom /></Protected>} />
+
+          {/* Doctor side */}
+          <Route path="/doctor/apply" element={<Protected><DoctorApply /></Protected>} />
+          <Route path="/doctor" element={<DoctorOnly><DoctorDashboard /></DoctorOnly>} />
+
           <Route path="/payment/success" element={<Protected><PaymentSuccess /></Protected>} />
           <Route path="/payment/cancel" element={<Protected><PaymentCancel /></Protected>} />
           <Route path="/admin" element={<Protected adminOnly><Admin /></Protected>} />
