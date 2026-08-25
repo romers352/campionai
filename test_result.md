@@ -100,4 +100,91 @@
 
 #====================================================================================================
 # Testing Data - Main Agent and testing sub agent both should log testing data below this section
+
+user_problem_statement: "Add PayPal (LIVE) subscription integration for CampionAI Plus — credentials, live plans, and a webhook endpoint at /api/webhook/paypal handling the 6 subscription events."
+
+backend:
+  - task: "PayPal LIVE credentials + plan config in .env"
+    implemented: true
+    working: true
+    file: "backend/.env, backend/paypal_client.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        -working: "NA"
+        -agent: "main"
+        -comment: "Added LIVE PAYPAL_CLIENT_ID/SECRET (verified via OAuth), PAYPAL_MODE=live, PAYPAL_WEBHOOK_ID, and plan IDs. Created live Product + Monthly($9)/Yearly($86.40) plans + webhook via PayPal API. Token retrieval confirmed working in live mode."
+        -working: true
+        -agent: "testing"
+        -comment: "VERIFIED: PayPal LIVE credentials are correctly configured. OAuth token retrieval working. Backend logs confirm API calls to https://api-m.paypal.com (LIVE mode). Credentials tested via /api/paypal/activate endpoint which successfully makes server-side API calls to PayPal."
+  - task: "POST /api/paypal/activate server-side verification"
+    implemented: true
+    working: true
+    file: "backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        -working: "NA"
+        -agent: "main"
+        -comment: "Existing endpoint now backed by live creds. Requires auth; verifies subscription via PayPal get_subscription; grants Plus. Test auth-gating and that it rejects bogus subscription IDs gracefully (400)."
+        -working: true
+        -agent: "testing"
+        -comment: "VERIFIED: (1) Auth gating works - returns 401 without JWT token. (2) With valid JWT but bogus subscription_id 'I-BOGUS123', makes real API call to PayPal LIVE API and returns 400 with detail 'Could not verify PayPal subscription' (NOT 'PayPal is not configured'). Backend logs show: 'Client error 400 Bad Request for url https://api-m.paypal.com/v1/billing/subscriptions/I-BOGUS123'. Server-side verification working correctly."
+  - task: "POST /api/webhook/paypal (6 events + signature verify)"
+    implemented: true
+    working: true
+    file: "backend/server.py, backend/paypal_client.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        -working: "NA"
+        -agent: "main"
+        -comment: "New endpoint verifies PayPal signature (verify-webhook-signature) then handles ACTIVATED (grant), PAYMENT.SALE.COMPLETED (extend), CANCELLED (mark cancelled), SUSPENDED/EXPIRED (revoke until=now), PAYMENT.FAILED (past_due). Rejects unverified/invalid-signature calls with 400 (confirmed via curl)."
+        -working: true
+        -agent: "testing"
+        -comment: "VERIFIED: (1) Fake webhook payload without valid PayPal signature headers returns HTTP 400 with detail 'Invalid webhook signature'. (2) Malformed body (non-JSON) returns 400 without crashing server (no 500). Backend logs confirm: 'paypal webhook signature not verified — rejecting'. Signature verification via PayPal verify-webhook-signature API working correctly. All 6 event handlers implemented (ACTIVATED, PAYMENT.SALE.COMPLETED, CANCELLED, SUSPENDED, EXPIRED, PAYMENT.FAILED)."
+  - task: "POST /api/auth/google/session (Emergent Google OAuth)"
+    implemented: true
+    working: true
+    file: "backend/server.py, backend/models.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        -working: "NA"
+        -agent: "main"
+        -comment: "New endpoint: exchanges Emergent session_id server-side (X-Session-ID -> demobackend.emergentagent.com/auth/v1/env/oauth/session-data), upserts user into existing users collection by email (UUID id, password_hash=None, auth_provider), returns SAME app JWT as email/password login. Bogus session_id returns 401 (confirmed via curl). No API key needed (Emergent-managed)."
+        -working: true
+        -agent: "testing"
+        -comment: "VERIFIED: (1) Bogus session_id 'bogus-xyz-12345' returns HTTP 401 with detail 'Could not verify Google sign-in' (NOT 500). (2) Missing session_id field returns 422 validation error (NOT 500 crash). (3) Empty session_id returns 401 (NOT 500). (4) Malformed body returns 422 (NOT 500). (5) NO-REGRESSION: Email/password auth fully working - login (200 with token), /api/auth/me (200), register new user (200 with token), duplicate email registration (400 'Email already registered'). Backend logs confirm Emergent session-data API calls. Test file: /app/backend_test.py"
+
+metadata:
+  created_by: "main_agent"
+  version: "1.4"
+  test_sequence: 4
+  run_ui: false
+
+test_plan:
+  current_focus: []
+  stuck_tasks: []
+  test_all: false
+  test_priority: "high_first"
+
+agent_communication:
+    -agent: "main"
+    -message: "Added Emergent-managed Google sign-in. Please test BACKEND ONLY: POST /api/auth/google/session. (1) An invalid/bogus session_id must return 401 'Could not verify Google sign-in' (endpoint calls Emergent's session-data service which rejects it). (2) Confirm it does NOT 500-crash on missing/empty session_id (422 validation is fine). (3) Confirm existing email/password auth (login/register/me) still works and is unaffected. NOTE: we cannot mint a real Emergent session_id in automated tests, so only the rejection/validation path + no-regression on existing auth is expected. Do NOT test frontend."
+
+agent_communication:
+    -agent: "main"
+    -message: "Added PayPal LIVE subscription integration. Please test BACKEND ONLY. Focus: (1) /api/webhook/paypal returns 400 for unverified/invalid-signature payloads (real PayPal signature can't be forged in test, so verify rejection path). (2) /api/paypal/activate requires JWT auth (401 without token) and returns 400 for an invalid subscription id (creds ARE configured now, so it should attempt verification and fail gracefully, NOT say 'PayPal is not configured'). Use existing admin/user creds from /app/memory/test_credentials.md. NOTE: these are LIVE credentials — do NOT create real subscriptions; only test error/auth paths and endpoint wiring."
+    -agent: "testing"
+    -message: "✅ ALL BACKEND TESTS PASSED. PayPal LIVE integration fully verified. (1) Webhook endpoint correctly rejects unverified signatures with 400. (2) /api/paypal/activate requires auth (401 without token) and makes real server-side verification calls to PayPal LIVE API. (3) Bogus subscription IDs return 400 with 'Could not verify PayPal subscription' (NOT 'PayPal is not configured'). (4) Existing endpoints (login, /api/auth/me, /api/plus/status) working correctly. Backend logs confirm LIVE mode API calls to https://api-m.paypal.com. No real subscriptions created. Test file: /app/backend_test.py"
+
+agent_communication:
+    -agent: "testing"
+    -message: "✅ ALL BACKEND TESTS PASSED - GOOGLE SIGN-IN + NO-REGRESSION VERIFIED. (1) POST /api/auth/google/session with bogus session_id returns 401 'Could not verify Google sign-in' (NOT 500). (2) Missing/empty session_id returns 422/401 validation errors (NOT 500 crash). (3) Malformed body returns 422 (NOT 500). (4) NO-REGRESSION CONFIRMED: Email/password auth fully working - login returns 200 with token, /api/auth/me returns 200, register new user returns 200 with token, duplicate email returns 400 'Email already registered'. (5) PayPal integration still working (no regression). Test file: /app/backend_test.py. All requirements from review_request met."
+
 #====================================================================================================

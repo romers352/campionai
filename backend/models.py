@@ -25,6 +25,10 @@ class LoginInput(BaseModel):
     password: str
 
 
+class GoogleSessionInput(BaseModel):
+    session_id: str
+
+
 class TrustedContact(BaseModel):
     name: str
     relationship: str
