@@ -14,55 +14,110 @@ import {
 
 const TYPE_ICON = { breathing: Wind, yoga: Flower2, movement: Activity, meditation: Brain, task: HeartHandshake };
 
+const INCLUDED = [
+  { icon: Brain, label: "AI daily plan", note: "Meditation, yoga & breathing tuned to your goals" },
+  { icon: HeartHandshake, label: "Real-life tasks", note: "Gentle nudges that fit your actual day" },
+  { icon: Utensils, label: "Effortless food log", note: "Describe a meal, we estimate the macros" },
+  { icon: CalendarClock, label: "Gentle schedule", note: "Give your intentions a time that sticks" },
+];
+
+const PLAN_PERKS = [
+  "Personalized plan, refreshed daily",
+  "Natural-language calorie & macro tracking",
+  "Proactive coaching woven into every chat",
+  "Cancel anytime — your data stays yours",
+];
+
 function Paywall({ status, onTrial, onCheckout, onDonate, busy }) {
+  const plans = [
+    { id: "plus_monthly", price: "$9", per: "/mo", note: "Billed monthly" },
+    { id: "plus_yearly", price: "$86.40", per: "/yr", note: "Just $7.20/mo · billed yearly", featured: true, save: "Save 20%" },
+  ];
   return (
-    <div className="max-w-3xl mx-auto px-6 py-16">
-      <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.6 }}>
-        <p className="text-[10px] tracking-[0.25em] uppercase text-muted-foreground mb-4 flex items-center gap-2"><Sparkles className="h-3.5 w-3.5" /> CampionAI Plus</p>
-        <h1 className="font-display font-light text-4xl md:text-5xl tracking-tight mb-4">Your companion becomes your daily coach.</h1>
-        <p className="text-muted-foreground text-lg leading-relaxed mb-10 max-w-xl">
-          A personalized daily plan — meditation, yoga, breathing and real-life tasks — plus natural food logging and a
-          gentle schedule. CampionAI weaves it into your conversations, so it feels like a friend cheering you on.
+    <div className="max-w-3xl mx-auto px-6 py-16 md:py-20">
+      <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.6, ease: [0.16, 1, 0.3, 1] }}>
+        <p className="text-[10px] tracking-[0.3em] uppercase text-muted-foreground mb-5 flex items-center gap-2"><Sparkles className="h-3.5 w-3.5" /> CampionAI Plus</p>
+        <h1 className="font-display font-light text-4xl md:text-6xl tracking-tight leading-[1.02] mb-5">
+          Your companion becomes<br /><span className="italic">your daily coach.</span>
+        </h1>
+        <p className="text-muted-foreground text-lg leading-relaxed mb-12 max-w-xl">
+          A gentle, personal wellness rhythm — and CampionAI weaves it into your conversations, so it feels
+          less like an app and more like a friend cheering you on.
         </p>
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-5 mb-8">
-          {[
-            { id: "plus_monthly", price: "$9", per: "/month", note: "Billed monthly" },
-            { id: "plus_yearly", price: "$86.40", per: "/year", note: "Save 20% · best value", featured: true },
-          ].map((p) => (
-            <div key={p.id} className={`border p-7 ${p.featured ? "border-foreground" : "border-border"}`} data-testid={`plan-${p.id}`}>
-              {p.featured && <span className="text-[10px] tracking-[0.2em] uppercase text-foreground/70">Best value</span>}
-              <div className="flex items-end gap-1 mt-2 mb-1">
-                <span className="font-display font-light text-4xl">{p.price}</span>
-                <span className="text-muted-foreground mb-1.5">{p.per}</span>
+        {/* What's included */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-px bg-border border border-border mb-14">
+          {INCLUDED.map((f) => (
+            <div key={f.label} className="bg-background p-6 flex items-start gap-4">
+              <f.icon className="h-5 w-5 text-foreground/80 mt-0.5 shrink-0" strokeWidth={1.5} />
+              <div>
+                <p className="font-medium">{f.label}</p>
+                <p className="text-sm text-muted-foreground leading-relaxed">{f.note}</p>
               </div>
-              <p className="text-xs text-muted-foreground mb-5">{p.note}</p>
-              <Button className="w-full rounded-full bg-primary text-primary-foreground hover:bg-zinc-200" onClick={() => onCheckout(p.id)} disabled={busy} data-testid={`subscribe-${p.id}`}>
-                {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : "Subscribe"}
-              </Button>
             </div>
           ))}
         </div>
 
-        {!status.trial_used && (
-          <div className="border border-border p-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-10">
-            <div>
-              <p className="font-medium">Not ready to commit?</p>
-              <p className="text-sm text-muted-foreground">Try everything free for 14 days — no card needed.</p>
+        {/* Pricing */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-5 mb-6">
+          {plans.map((p) => (
+            <div key={p.id}
+              className={`relative p-8 transition-colors ${p.featured ? "border border-foreground bg-white/[0.03]" : "border border-border hover:border-foreground/40"}`}
+              data-testid={`plan-${p.id}`}>
+              {p.save && (
+                <span className="absolute -top-3 left-8 bg-primary text-primary-foreground text-[10px] tracking-[0.15em] uppercase px-3 py-1">{p.save}</span>
+              )}
+              <div className="flex items-end gap-1.5 mb-1">
+                <span className="font-display font-light text-5xl leading-none">{p.price}</span>
+                <span className="text-muted-foreground mb-1.5">{p.per}</span>
+              </div>
+              <p className="text-xs text-muted-foreground mb-6">{p.note}</p>
+              {p.featured && (
+                <ul className="space-y-2.5 mb-7">
+                  {PLAN_PERKS.map((perk) => (
+                    <li key={perk} className="flex items-start gap-2.5 text-sm text-foreground/85">
+                      <Check className="h-4 w-4 text-foreground/70 mt-0.5 shrink-0" strokeWidth={2} /> {perk}
+                    </li>
+                  ))}
+                </ul>
+              )}
+              <Button
+                className={`w-full rounded-full ${p.featured ? "bg-primary text-primary-foreground hover:bg-zinc-200" : "bg-transparent border border-border text-foreground hover:bg-accent"}`}
+                onClick={() => onCheckout(p.id)} disabled={busy} data-testid={`subscribe-${p.id}`}>
+                {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : `Choose ${p.featured ? "yearly" : "monthly"}`}
+              </Button>
             </div>
-            <Button variant="outline" className="rounded-full border-border" onClick={onTrial} disabled={busy} data-testid="start-trial-button">
-              Start 14-day free trial
+          ))}
+        </div>
+        <p className="text-center text-xs text-muted-foreground mb-14">Every plan starts with a 14-day free trial. No charge today.</p>
+
+        {/* Trial */}
+        {!status.trial_used && (
+          <div className="border border-border bg-white/[0.02] p-7 flex flex-col sm:flex-row sm:items-center justify-between gap-5 mb-16">
+            <div className="flex items-start gap-4">
+              <Sparkles className="h-5 w-5 text-foreground/70 mt-0.5 shrink-0" strokeWidth={1.5} />
+              <div>
+                <p className="font-medium">Not ready to commit?</p>
+                <p className="text-sm text-muted-foreground">Try everything free for 14 days — no card needed.</p>
+              </div>
+            </div>
+            <Button variant="outline" className="rounded-full border-foreground/30 hover:bg-accent shrink-0" onClick={onTrial} disabled={busy} data-testid="start-trial-button">
+              {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : "Start 14-day free trial"}
             </Button>
           </div>
         )}
 
-        <div className="border-t border-border pt-10">
-          <p className="text-[10px] tracking-[0.25em] uppercase text-muted-foreground mb-2 flex items-center gap-2"><Heart className="h-3.5 w-3.5" /> Keep CampionAI free for everyone</p>
-          <p className="text-sm text-muted-foreground mb-5 max-w-lg">CampionAI is free for individuals. If you can, a small donation helps us keep it that way.</p>
+        {/* Donation */}
+        <div className="border-t border-border pt-12">
+          <p className="text-[10px] tracking-[0.3em] uppercase text-muted-foreground mb-3 flex items-center gap-2"><Heart className="h-3.5 w-3.5" /> Keep CampionAI free for everyone</p>
+          <p className="text-muted-foreground mb-6 max-w-lg leading-relaxed">
+            CampionAI is free for individuals — and always will be. If Plus isn't for you but you'd like to help,
+            a small donation keeps the lights on for people who need it.
+          </p>
           <div className="flex flex-wrap gap-3">
             {[["donate_5", "$5"], ["donate_15", "$15"], ["donate_30", "$30"]].map(([id, label]) => (
-              <Button key={id} variant="outline" className="rounded-full border-border" onClick={() => onDonate(id)} disabled={busy} data-testid={`donate-${id}`}>
-                Donate {label}
+              <Button key={id} variant="outline" className="rounded-full border-border hover:border-foreground/40 hover:bg-accent px-6" onClick={() => onDonate(id)} disabled={busy} data-testid={`donate-${id}`}>
+                <Heart className="h-3.5 w-3.5 mr-2 text-foreground/60" strokeWidth={1.5} /> Donate {label}
               </Button>
             ))}
           </div>
