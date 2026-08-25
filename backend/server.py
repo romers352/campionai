@@ -31,7 +31,7 @@ from memory_engine import extract_memories, build_memory_context
 from notifications import alert_contact, summarize
 from voice import synthesize
 from storage import put_object, get_object, init_storage, APP_NAME, MIME_TYPES
-from paypal_client import get_subscription as paypal_get_subscription
+from paypal_client import get_subscription as paypal_get_subscription, verify_webhook_signature as paypal_verify_webhook
 from emergentintegrations.payments.stripe.checkout import StripeCheckout, CheckoutSessionRequest
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
@@ -926,6 +926,84 @@ async def stripe_webhook(request: Request):
         record = await db.payment_transactions.find_one({"session_id": resp.session_id}, {"_id": 0})
         if record:
             await _grant_access(record)
+    return {"status": "ok"}
+
+
+@api.post("/webhook/paypal")
+async def paypal_webhook(request: Request):
+    raw = await request.body()
+    # LIVE: verify the signature with PayPal before trusting the event.
+    try:
+        verified = await paypal_verify_webhook(request.headers, raw)
+    except Exception as e:
+        logger.error(f"paypal webhook verify error: {e}")
+        verified = False
+    if not verified:
+        logger.warning("paypal webhook signature not verified — rejecting")
+        raise HTTPException(status_code=400, detail="Invalid webhook signature")
+
+    try:
+        event = json.loads(raw.decode("utf-8"))
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid payload")
+
+    etype = event.get("event_type", "")
+    resource = event.get("resource", {}) or {}
+    # Subscription id lives in resource.id for BILLING.SUBSCRIPTION.* and in
+    # resource.billing_agreement_id for PAYMENT.SALE.COMPLETED.
+    sub_id = resource.get("id") if etype.startswith("BILLING.SUBSCRIPTION") else resource.get("billing_agreement_id")
+    logger.info(f"paypal webhook: {etype} sub={sub_id}")
+
+    if not sub_id:
+        return {"status": "ignored"}
+
+    tx = await db.payment_transactions.find_one({"paypal_subscription_id": sub_id}, {"_id": 0})
+    user_id = tx.get("user_id") if tx else None
+    now = datetime.now(timezone.utc)
+
+    if etype == "BILLING.SUBSCRIPTION.ACTIVATED":
+        if tx:
+            await db.payment_transactions.update_one({"session_id": tx["session_id"]}, {"$set": {"status": "completed", "payment_status": "paid", "granted": False, "updated_at": now_iso()}})
+            fresh = await db.payment_transactions.find_one({"session_id": tx["session_id"]}, {"_id": 0})
+            await _grant_access(fresh)
+    elif etype == "PAYMENT.SALE.COMPLETED":
+        # Recurring renewal payment — extend the paid period.
+        if tx and user_id:
+            pkg = PACKAGES.get(tx.get("package_id")) or {}
+            period = pkg.get("period_days", 30)
+            user = await db.users.find_one({"id": user_id})
+            plus = (user or {}).get("plus", {}) or {}
+            base = now
+            cur = plus.get("until")
+            if cur:
+                try:
+                    cur_dt = datetime.fromisoformat(cur)
+                    if cur_dt > base:
+                        base = cur_dt
+                except Exception:
+                    pass
+            until = base + timedelta(days=period)
+            await db.users.update_one({"id": user_id}, {"$set": {
+                "plus.status": "active", "plus.until": until.isoformat(), "plus.last_payment": now_iso(),
+            }})
+    elif etype == "BILLING.SUBSCRIPTION.CANCELLED":
+        # Keep remaining paid time; just mark as cancelled (won't auto-renew).
+        if user_id:
+            await db.users.update_one({"id": user_id}, {"$set": {"plus.status": "cancelled"}})
+        if tx:
+            await db.payment_transactions.update_one({"session_id": tx["session_id"]}, {"$set": {"status": "cancelled", "updated_at": now_iso()}})
+    elif etype in ("BILLING.SUBSCRIPTION.SUSPENDED", "BILLING.SUBSCRIPTION.EXPIRED"):
+        # Revoke access immediately.
+        if user_id:
+            status = "suspended" if "SUSPENDED" in etype else "expired"
+            await db.users.update_one({"id": user_id}, {"$set": {"plus.status": status, "plus.until": now.isoformat()}})
+        if tx:
+            await db.payment_transactions.update_one({"session_id": tx["session_id"]}, {"$set": {"status": "cancelled", "updated_at": now_iso()}})
+    elif etype == "BILLING.SUBSCRIPTION.PAYMENT.FAILED":
+        # Grace period — flag but don't revoke yet.
+        if user_id:
+            await db.users.update_one({"id": user_id}, {"$set": {"plus.status": "past_due"}})
+
     return {"status": "ok"}
 
 

@@ -43,6 +43,7 @@ A privacy-first, multimodal AI daily companion that feels like a trusted close f
 - [x] **Voice**: browser Web Speech STT (mic) + Fish Audio TTS playback (speaker toggle; admin-configurable; off until key added).
 - [x] **CampionAI Plus (paid wellness)**: Stripe (emergentintegrations Flow B, test key) monthly ($9) + yearly ($86.40), app-managed 14-day free trial, one-time donations ($5/$15/$30). AI daily plan (meditation/yoga/breathing/tasks), natural-language food logging w/ AI macro estimate + totals, cal.com-style daily schedule, proactive coaching woven into chat. 402-gated behind active Plus.
 - [x] Tested: iterations 1-4 (backend 75/75; frontend 100% of flows). Security: payment-status endpoint auth+ownership enforced.
+- [x] **PayPal LIVE subscriptions**: live Client ID/Secret (verified), Product + Monthly($9)/Yearly($86.40) plans + webhook auto-created via API. New `/api/webhook/paypal` verifies PayPal signature and handles all 6 events (ACTIVATED→grant, PAYMENT.SALE.COMPLETED→extend, CANCELLED→mark, SUSPENDED/EXPIRED→revoke, PAYMENT.FAILED→past_due). Webhook points to https://nurekha.com/api/webhook/paypal. Backend tested (auth/error/signature paths).
 
 ## Backlog
 - **P1:** Provide production keys — Resend (email), Twilio (SMS), Fish Audio (voice), and a supported-country Stripe account to enable true recurring subscriptions (currently app-managed periods because Flow A sandbox is blocked for country NP).
