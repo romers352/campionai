@@ -18,7 +18,7 @@ from models import (
     RegisterInput, LoginInput, OnboardingInput, ProfileUpdate, ChatInput,
     SessionCreate, MemoryUpdate, ModelRouteConfig, ProfessionalInput,
     ProviderSettings, PrivateModeInput, VoiceSettingsInput, TTSInput,
-    CheckoutInput, FoodInput, EventInput, PlanItemToggle, now_iso, new_id,
+    CheckoutInput, FoodInput, EventInput, PlanItemToggle, PaypalActivate, now_iso, new_id,
 )
 from auth import (
     hash_password, verify_password, create_token,
@@ -31,6 +31,7 @@ from memory_engine import extract_memories, build_memory_context
 from notifications import alert_contact, summarize
 from voice import synthesize
 from storage import put_object, get_object, init_storage, APP_NAME, MIME_TYPES
+from paypal_client import get_subscription as paypal_get_subscription
 from emergentintegrations.payments.stripe.checkout import StripeCheckout, CheckoutSessionRequest
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
@@ -848,6 +849,37 @@ async def payments_checkout(inp: CheckoutInput, request: Request, user=Depends(g
 async def top_donors():
     donors = await db.donors.find({}, {"_id": 0}).sort("total", -1).to_list(10)
     return [{"name": d.get("name"), "avatar": d.get("avatar"), "total": round(d.get("total", 0), 2)} for d in donors]
+
+
+@api.post("/paypal/activate")
+async def paypal_activate(inp: PaypalActivate, user=Depends(get_current_user)):
+    plan_key = "plus_yearly" if inp.plan_key == "yearly" else "plus_monthly"
+    pkg = PACKAGES[plan_key]
+    # Verify server-side when PayPal creds are configured
+    try:
+        sub = await paypal_get_subscription(inp.subscription_id)
+    except Exception as e:
+        logger.error(f"paypal verify error: {e}")
+        raise HTTPException(status_code=400, detail="Could not verify PayPal subscription")
+    if sub is None:
+        raise HTTPException(status_code=400, detail="PayPal is not configured")
+    if sub.get("status") not in ("ACTIVE", "APPROVED"):
+        raise HTTPException(status_code=400, detail=f"Subscription not active ({sub.get('status')})")
+    session_key = f"paypal-{inp.subscription_id}"
+    existing = await db.payment_transactions.find_one({"session_id": session_key}, {"_id": 0})
+    if not existing:
+        tx = {
+            "session_id": session_key, "user_id": user["id"], "package_id": plan_key,
+            "amount": float(pkg["amount"]), "currency": "usd", "type": "subscription",
+            "provider": "paypal", "paypal_subscription_id": inp.subscription_id,
+            "status": "completed", "payment_status": "paid", "granted": False,
+            "created_at": now_iso(), "updated_at": now_iso(),
+        }
+        await db.payment_transactions.insert_one(dict(tx))
+        existing = tx
+    await _grant_access(existing)
+    fresh = await db.users.find_one({"id": user["id"]})
+    return _plus_state(fresh)
 
 
 @api.get("/payments/status/{session_id}")

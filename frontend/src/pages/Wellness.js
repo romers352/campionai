@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Checkbox } from "@/components/ui/checkbox";
 import { toast } from "@/components/ui/sonner";
+import PayPalSubscribe, { paypalConfigured } from "@/components/PayPalSubscribe";
 import {
   ArrowLeft, Sparkles, Check, RefreshCw, Utensils, CalendarClock, Plus, Trash2,
   Wind, Flower2, Activity, Brain, HeartHandshake, Loader2, Heart,
@@ -36,7 +37,7 @@ const PLAN_PERKS = [
   "Cancel anytime — your data stays yours",
 ];
 
-function Paywall({ status, onTrial, onCheckout, onDonate, busy }) {
+function Paywall({ status, onTrial, onCheckout, onDonate, onActivated, busy }) {
   const [donors, setDonors] = useState([]);
   const [custom, setCustom] = useState("");
   const [anon, setAnon] = useState(false);
@@ -104,6 +105,26 @@ function Paywall({ status, onTrial, onCheckout, onDonate, busy }) {
           ))}
         </div>
         <p className="text-center text-xs text-muted-foreground mb-14">Every plan starts with a 14-day free trial. No charge today.</p>
+
+        {paypalConfigured() && (
+          <div className="mb-14">
+            <div className="flex items-center gap-4 mb-6">
+              <div className="h-px flex-1 bg-border" />
+              <span className="text-[10px] tracking-[0.3em] uppercase text-muted-foreground">Or subscribe with PayPal</span>
+              <div className="h-px flex-1 bg-border" />
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div className="border border-border rounded-2xl bg-card/40 p-5">
+                <p className="text-sm text-muted-foreground mb-4">Monthly · $9/mo</p>
+                <PayPalSubscribe planKey="monthly" onActivated={onActivated} />
+              </div>
+              <div className="border border-border rounded-2xl bg-card/40 p-5">
+                <p className="text-sm text-muted-foreground mb-4">Yearly · $86.40/yr</p>
+                <PayPalSubscribe planKey="yearly" onActivated={onActivated} />
+              </div>
+            </div>
+          </div>
+        )}
 
         {!status.trial_used && (
           <div className="border border-border bg-card/40 rounded-2xl p-7 flex flex-col sm:flex-row sm:items-center justify-between gap-5 mb-16">
@@ -297,7 +318,8 @@ export default function Wellness() {
   );
 
   if (!status.active) {
-    return <div className="min-h-screen bg-background relative"><Glow /><Header /><Paywall status={status} onTrial={startTrial} onCheckout={checkout} onDonate={checkout} busy={busy} /></div>;
+    const onActivated = async () => { await refresh(); const s = await loadStatus(); if (s.active) await loadPlusData(); };
+    return <div className="min-h-screen bg-background relative"><Glow /><Header /><Paywall status={status} onTrial={startTrial} onCheckout={checkout} onDonate={checkout} onActivated={onActivated} busy={busy} /></div>;
   }
 
   const items = plan?.items || [];

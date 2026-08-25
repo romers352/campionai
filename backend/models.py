@@ -142,3 +142,8 @@ class EventInput(BaseModel):
 
 class PlanItemToggle(BaseModel):
     item_index: int
+
+
+class PaypalActivate(BaseModel):
+    subscription_id: str
+    plan_key: str  # "monthly" | "yearly"
