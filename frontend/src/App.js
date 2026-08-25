@@ -1,9 +1,10 @@
 import React from "react";
 import "@/App.css";
-import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
+import { BrowserRouter, Routes, Route, Navigate, useLocation } from "react-router-dom";
 import { useAuth } from "@/context/AuthContext";
 import Landing from "@/pages/Landing";
 import Auth from "@/pages/Auth";
+import AuthCallback from "@/components/AuthCallback";
 import Onboarding from "@/pages/Onboarding";
 import Chat from "@/pages/Chat";
 import Admin from "@/pages/Admin";
@@ -29,22 +30,36 @@ function Protected({ children, adminOnly }) {
 }
 
 export default function App() {
-  const { user, loading } = useAuth();
   return (
     <div className="App grain">
       <BrowserRouter>
-        <Routes>
-          <Route path="/" element={loading ? <FullLoader /> : user ? <Navigate to={user.is_admin ? "/admin" : "/chat"} replace /> : <Landing />} />
-          <Route path="/auth" element={user ? <Navigate to={user.is_admin ? "/admin" : "/chat"} replace /> : <Auth />} />
-          <Route path="/onboarding" element={<Onboarding />} />
-          <Route path="/chat" element={<Protected><Chat /></Protected>} />
-          <Route path="/wellness" element={<Protected><Wellness /></Protected>} />
-          <Route path="/payment/success" element={<Protected><PaymentSuccess /></Protected>} />
-          <Route path="/payment/cancel" element={<Protected><PaymentCancel /></Protected>} />
-          <Route path="/admin" element={<Protected adminOnly><Admin /></Protected>} />
-          <Route path="*" element={<Navigate to="/" replace />} />
-        </Routes>
+        <AppInner />
       </BrowserRouter>
     </div>
+  );
+}
+
+function AppInner() {
+  const { user, loading } = useAuth();
+  const location = useLocation();
+
+  // Emergent Google OAuth returns to {redirect}#session_id=... — intercept it
+  // synchronously (before any Protected route runs) and hand off to AuthCallback.
+  if (location.hash && location.hash.includes("session_id=")) {
+    return <AuthCallback />;
+  }
+
+  return (
+    <Routes>
+      <Route path="/" element={loading ? <FullLoader /> : user ? <Navigate to={user.is_admin ? "/admin" : "/chat"} replace /> : <Landing />} />
+      <Route path="/auth" element={user ? <Navigate to={user.is_admin ? "/admin" : "/chat"} replace /> : <Auth />} />
+      <Route path="/onboarding" element={<Onboarding />} />
+      <Route path="/chat" element={<Protected><Chat /></Protected>} />
+      <Route path="/wellness" element={<Protected><Wellness /></Protected>} />
+      <Route path="/payment/success" element={<Protected><PaymentSuccess /></Protected>} />
+      <Route path="/payment/cancel" element={<Protected><PaymentCancel /></Protected>} />
+      <Route path="/admin" element={<Protected adminOnly><Admin /></Protected>} />
+      <Route path="*" element={<Navigate to="/" replace />} />
+    </Routes>
   );
 }

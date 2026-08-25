@@ -20,7 +20,15 @@ export function AuthProvider({ children }) {
     }
   }, []);
 
-  useEffect(() => { loadUser(); }, [loadUser]);
+  useEffect(() => {
+    // CRITICAL: If returning from Google OAuth callback, skip the /me check.
+    // AuthCallback exchanges the session_id and establishes the session first.
+    if (window.location.hash?.includes("session_id=")) {
+      setLoading(false);
+      return;
+    }
+    loadUser();
+  }, [loadUser]);
 
   const login = async (email, password) => {
     const { data } = await api.post("/auth/login", { email, password });

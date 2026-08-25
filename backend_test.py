@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 """
-Backend test suite for CampionAI PayPal LIVE subscription integration.
+Backend test suite for CampionAI.
+Tests PayPal LIVE subscription integration and Emergent Google OAuth.
 Tests error paths, auth-gating, and endpoint wiring WITHOUT creating real subscriptions.
 """
 import requests
 import json
+import uuid
 
 # Backend URL from frontend/.env
 BASE_URL = "https://fervent-carver-8.preview.emergentagent.com/api"
@@ -142,29 +144,189 @@ def test_paypal_activate_bogus_subscription(token):
     print(f"   Detail message: {response.json().get('detail', 'N/A')}")
 
 
+# ============ Google Sign-in (Emergent OAuth) Tests ============
+
+def test_google_session_bogus():
+    """Test POST /api/auth/google/session with bogus session_id - must return 401"""
+    print("\n=== Testing POST /api/auth/google/session (bogus session_id) ===")
+    response = requests.post(
+        f"{BASE_URL}/auth/google/session",
+        json={"session_id": "bogus-xyz-12345"}
+    )
+    print(f"Status: {response.status_code}")
+    print(f"Response: {response.text}")
+    
+    # Must return 401, NOT 500
+    assert response.status_code == 401, \
+        f"Expected 401 for bogus session_id, got {response.status_code}"
+    
+    # Must contain the expected error message
+    response_json = response.json()
+    detail = response_json.get("detail", "").lower()
+    assert "could not verify google sign-in" in detail, \
+        f"Expected 'Could not verify Google sign-in', got: {response_json.get('detail')}"
+    
+    print("✅ Bogus session_id correctly returns 401 with 'Could not verify Google sign-in'")
+
+
+def test_google_session_missing_body():
+    """Test POST /api/auth/google/session with missing body - should return 422, NOT 500"""
+    print("\n=== Testing POST /api/auth/google/session (missing body) ===")
+    response = requests.post(
+        f"{BASE_URL}/auth/google/session",
+        json={}
+    )
+    print(f"Status: {response.status_code}")
+    print(f"Response: {response.text}")
+    
+    # Should return 422 (validation error) or 401, NOT 500
+    assert response.status_code in [422, 401, 400], \
+        f"Expected 422/401/400 for missing session_id, got {response.status_code}"
+    
+    print(f"✅ Missing session_id returns {response.status_code} (validation error, no crash)")
+
+
+def test_google_session_empty_session_id():
+    """Test POST /api/auth/google/session with empty session_id - should return 401, NOT 500"""
+    print("\n=== Testing POST /api/auth/google/session (empty session_id) ===")
+    response = requests.post(
+        f"{BASE_URL}/auth/google/session",
+        json={"session_id": ""}
+    )
+    print(f"Status: {response.status_code}")
+    print(f"Response: {response.text}")
+    
+    # Should return 401 or 422, NOT 500
+    assert response.status_code in [401, 422, 400], \
+        f"Expected 401/422/400 for empty session_id, got {response.status_code}"
+    
+    print(f"✅ Empty session_id returns {response.status_code} (no crash)")
+
+
+def test_google_session_null_body():
+    """Test POST /api/auth/google/session with null/malformed body - should not crash"""
+    print("\n=== Testing POST /api/auth/google/session (malformed body) ===")
+    response = requests.post(
+        f"{BASE_URL}/auth/google/session",
+        data="not json",
+        headers={"Content-Type": "application/json"}
+    )
+    print(f"Status: {response.status_code}")
+    print(f"Response: {response.text}")
+    
+    # Should return 422 or 400, NOT 500
+    assert response.status_code in [422, 400], \
+        f"Expected 422/400 for malformed body, got {response.status_code}"
+    
+    print(f"✅ Malformed body returns {response.status_code} (no crash)")
+
+
+# ============ No-regression: Email/Password Auth Tests ============
+
+def test_register_new_user():
+    """Test POST /api/auth/register with fresh random email - should return 200 with token"""
+    print("\n=== Testing POST /api/auth/register (new user) ===")
+    random_email = f"testuser_{uuid.uuid4().hex[:8]}@campionai-test.com"
+    response = requests.post(
+        f"{BASE_URL}/auth/register",
+        json={
+            "email": random_email,
+            "password": "TestPass123!",
+            "preferred_name": "Test User"
+        }
+    )
+    print(f"Status: {response.status_code}")
+    print(f"Response: {response.json()}")
+    
+    assert response.status_code == 200, \
+        f"Expected 200 for new registration, got {response.status_code}: {response.text}"
+    
+    data = response.json()
+    assert "token" in data, "No token in registration response"
+    assert "user" in data, "No user in registration response"
+    assert data["user"]["email"] == random_email.lower(), "Email mismatch"
+    
+    print(f"✅ New user registration successful: {random_email}")
+    return random_email
+
+
+def test_register_duplicate_email(email):
+    """Test POST /api/auth/register with duplicate email - should return 400"""
+    print("\n=== Testing POST /api/auth/register (duplicate email) ===")
+    response = requests.post(
+        f"{BASE_URL}/auth/register",
+        json={
+            "email": email,
+            "password": "AnotherPass456!",
+            "preferred_name": "Duplicate User"
+        }
+    )
+    print(f"Status: {response.status_code}")
+    print(f"Response: {response.text}")
+    
+    assert response.status_code == 400, \
+        f"Expected 400 for duplicate email, got {response.status_code}"
+    
+    response_json = response.json()
+    detail = response_json.get("detail", "").lower()
+    assert "already registered" in detail or "already exists" in detail, \
+        f"Expected 'already registered' message, got: {response_json.get('detail')}"
+    
+    print("✅ Duplicate email correctly returns 400 with 'Email already registered'")
+
+
 def main():
     print("=" * 70)
-    print("CampionAI PayPal LIVE Integration - Backend Tests")
+    print("CampionAI Backend Tests")
+    print("Testing: PayPal LIVE Integration + Emergent Google OAuth")
     print("Testing error paths, auth-gating, and endpoint wiring")
     print("NO REAL SUBSCRIPTIONS WILL BE CREATED")
     print("=" * 70)
     
     try:
-        # 1. Test existing endpoints (spot-check)
+        # ============ PART 1: Google Sign-in Tests (NEW) ============
+        print("\n" + "=" * 70)
+        print("PART 1: GOOGLE SIGN-IN (EMERGENT OAUTH) TESTS")
+        print("=" * 70)
+        
+        test_google_session_bogus()
+        test_google_session_missing_body()
+        test_google_session_empty_session_id()
+        test_google_session_null_body()
+        
+        # ============ PART 2: No-regression Email/Password Auth ============
+        print("\n" + "=" * 70)
+        print("PART 2: NO-REGRESSION EMAIL/PASSWORD AUTH TESTS")
+        print("=" * 70)
+        
         token = test_login()
         test_me_endpoint(token)
-        test_plus_status(token)
         
-        # 2. Test webhook endpoint
+        # Test registration with new user
+        new_email = test_register_new_user()
+        test_register_duplicate_email(new_email)
+        
+        # ============ PART 3: PayPal Integration Tests (EXISTING) ============
+        print("\n" + "=" * 70)
+        print("PART 3: PAYPAL LIVE INTEGRATION TESTS")
+        print("=" * 70)
+        
+        test_plus_status(token)
         test_webhook_invalid_signature()
         test_webhook_malformed_body()
-        
-        # 3. Test PayPal activate endpoint
         test_paypal_activate_no_auth()
         test_paypal_activate_bogus_subscription(token)
         
         print("\n" + "=" * 70)
         print("✅ ALL TESTS PASSED")
+        print("=" * 70)
+        print("\nSUMMARY:")
+        print("  ✅ Google sign-in endpoint correctly rejects bogus/invalid session_ids (401)")
+        print("  ✅ Google sign-in endpoint handles missing/empty body without crashing")
+        print("  ✅ Email/password auth (login, register, /me) working correctly")
+        print("  ✅ Duplicate email registration correctly returns 400")
+        print("  ✅ PayPal webhook signature verification working")
+        print("  ✅ PayPal activate endpoint auth-gated and server-side verification working")
         print("=" * 70)
         
     except AssertionError as e:

@@ -18,7 +18,7 @@ from models import (
     RegisterInput, LoginInput, OnboardingInput, ProfileUpdate, ChatInput,
     SessionCreate, MemoryUpdate, ModelRouteConfig, ProfessionalInput,
     ProviderSettings, PrivateModeInput, VoiceSettingsInput, TTSInput,
-    CheckoutInput, FoodInput, EventInput, PlanItemToggle, PaypalActivate, now_iso, new_id,
+    CheckoutInput, FoodInput, EventInput, PlanItemToggle, PaypalActivate, GoogleSessionInput, now_iso, new_id,
 )
 from auth import (
     hash_password, verify_password, create_token,
@@ -142,6 +142,68 @@ async def login(inp: LoginInput):
     user = await db.users.find_one({"email": inp.email.lower()})
     if not user or not verify_password(inp.password, user["password_hash"]):
         raise HTTPException(status_code=401, detail="Invalid email or password")
+    return {"token": create_token(user["id"]), "user": _public_user(user)}
+
+
+EMERGENT_SESSION_URL = "https://demobackend.emergentagent.com/auth/v1/env/oauth/session-data"
+
+
+@api.post("/auth/google/session")
+async def google_session(inp: GoogleSessionInput):
+    """Emergent-managed Google sign-in. Exchanges the one-time session_id for the
+    user's Google profile (server-side), upserts the user into our existing users
+    collection (matched by email), and issues the SAME app JWT as email/password
+    login so the rest of the app works unchanged."""
+    import httpx
+    try:
+        async with httpx.AsyncClient(timeout=30) as c:
+            r = await c.get(EMERGENT_SESSION_URL, headers={"X-Session-ID": inp.session_id})
+            r.raise_for_status()
+            data = r.json()
+    except Exception as e:
+        logger.error(f"google session exchange error: {e}")
+        raise HTTPException(status_code=401, detail="Could not verify Google sign-in")
+
+    email = (data.get("email") or "").lower().strip()
+    name = data.get("name") or (email.split("@")[0] if email else "Friend")
+    picture = data.get("picture")
+    if not email:
+        raise HTTPException(status_code=400, detail="Google account has no email")
+
+    user = await db.users.find_one({"email": email})
+    if not user:
+        uid = new_id()
+        doc = {
+            "id": uid,
+            "email": email,
+            "password_hash": None,
+            "auth_provider": "google",
+            "picture": picture,
+            "is_admin": False,
+            "onboarded": False,
+            "private_mode": False,
+            "profile": {"preferred_name": name, "likes": [], "important_people": [], "goals": [],
+                         "communication_style": "warm"},
+            "trusted_contact": None,
+            "consent": None,
+            "country": None,
+            "checkin_frequency": "daily",
+            "last_checkin": None,
+            "created_at": now_iso(),
+        }
+        await db.users.insert_one(doc)
+        user = doc
+    else:
+        # Link Google to an existing (possibly password-based) account; keep data.
+        updates = {}
+        if picture and not user.get("picture"):
+            updates["picture"] = picture
+        if not user.get("auth_provider"):
+            updates["auth_provider"] = "google" if not user.get("password_hash") else "both"
+        if updates:
+            await db.users.update_one({"id": user["id"]}, {"$set": updates})
+            user.update(updates)
+
     return {"token": create_token(user["id"]), "user": _public_user(user)}
 
 

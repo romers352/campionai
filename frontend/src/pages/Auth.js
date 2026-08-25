@@ -49,6 +49,12 @@ export default function Auth() {
     }
   };
 
+  const googleSignIn = () => {
+    // REMINDER: DO NOT HARDCODE THE URL, OR ADD ANY FALLBACKS OR REDIRECT URLS, THIS BREAKS THE AUTH
+    const redirectUrl = window.location.origin + "/chat";
+    window.location.href = `https://auth.emergentagent.com/?redirect=${encodeURIComponent(redirectUrl)}`;
+  };
+
   return (
     <div className="min-h-screen bg-background flex flex-col md:flex-row">
       <div className="hidden md:flex md:w-1/2 relative p-14 flex-col justify-between overflow-hidden">
@@ -90,6 +96,27 @@ export default function Auth() {
               {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : mode === "login" ? "Sign in" : "Create account"}
             </Button>
           </form>
+
+          <div className="flex items-center gap-4 my-6">
+            <div className="h-px flex-1 bg-border" />
+            <span className="text-[10px] tracking-[0.25em] uppercase text-muted-foreground">or</span>
+            <div className="h-px flex-1 bg-border" />
+          </div>
+
+          <button
+            type="button"
+            data-testid="auth-google-button"
+            onClick={googleSignIn}
+            className="w-full h-12 rounded-full border border-border bg-transparent hover:bg-muted/40 transition-colors flex items-center justify-center gap-3 text-sm font-medium"
+          >
+            <svg className="h-5 w-5" viewBox="0 0 24 24" aria-hidden="true">
+              <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 0 1-2.2 3.32v2.76h3.56c2.08-1.92 3.28-4.74 3.28-8.09z" />
+              <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.56-2.76c-.98.66-2.24 1.06-3.72 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84A11 11 0 0 0 12 23z" />
+              <path fill="#FBBC05" d="M5.84 14.11a6.6 6.6 0 0 1 0-4.22V7.05H2.18a11 11 0 0 0 0 9.9l3.66-2.84z" />
+              <path fill="#EA4335" d="M12 4.75c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 1.4 14.97.4 12 .4A11 11 0 0 0 2.18 7.05l3.66 2.84C6.71 6.68 9.14 4.75 12 4.75z" />
+            </svg>
+            Continue with Google
+          </button>
 
           <p className="text-sm text-muted-foreground mt-8 text-center">
             {mode === "login" ? "New here? " : "Already have an account? "}
