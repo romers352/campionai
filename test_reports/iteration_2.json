@@ -1,0 +1,44 @@
+{
+  "summary": "Focused retest (iteration 2) of the 4 frontend fixes + 2 backend validation fixes from iteration_1, plus a light core-flow regression. Backend: ran the full pytest suite (36 tests incl. a new test_fixes_iteration2.py) -> 33 passed, 3 failed (all 3 are the already-reported 'mutation returns 200 for non-existent id' minor issue, which was only fixed for DELETE /api/memories). Frontend Playwright: verified admin login redirect, escalation color token, markdown bold rendering, check-in Reply behaviour, provider/openrouter error toast, private-mode toggle, and register->onboarding->chat streaming regression. ALL 6 targeted fixes VERIFIED WORKING.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "PUT /api/memories/{id}", "issue": "Still returns 200 {ok:true} for a non-existent memory id (DELETE was fixed to 404, PUT was not)."},
+      {"endpoint": "DELETE /api/admin/professionals/{id}", "issue": "Still returns 200 {ok:true} for a non-existent id; should be 404."},
+      {"endpoint": "PUT /api/admin/safety-events/{id}/resolve", "issue": "Still returns 200 {ok:true} for a non-existent id; should be 404."},
+      {"endpoint": "GET /api/checkin", "issue": "Unchanged from iteration_1: GET has a write side-effect (consumes the check-in) and calls the LLM. Still non-idempotent."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "SettingsDialog delete confirm dialog", "issue": "Testability: the 'Keep my data' (cancel) button has no data-testid, while 'Delete forever' has confirm-delete-everything. Add cancel-delete-everything.", "selector": "text='Keep my data'", "priority": "LOW"},
+      {"component": "Chat.js NavContent", "issue": "Still duplicated across desktop aside + mobile Sheet, so open-memory-button/open-settings-button/session-* testids appear twice in the DOM (carry-over LOW from iteration_1).", "selector": "[data-testid='open-memory-button']", "priority": "LOW"}
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Admin > Safety events / escalation accents", "issues": ["'high' badge is now visible (white #FFF text on terracotta rgb(216,115,85)) but the contrast ratio is ~3.0:1, below WCAG AA 4.5:1 for small text. Consider a darker terracotta or larger/bolder badge text."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_fixes_iteration2.py",
+    "/app/backend/tests/conftest.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [
+    "Optional (carry-over minor): return 404 from PUT /api/memories/{id}, DELETE /api/admin/professionals/{id} and PUT /api/admin/safety-events/{id}/resolve when the id does not match (only memory DELETE was fixed).",
+    "Optional: add data-testid='cancel-delete-everything' to the 'Keep my data' button.",
+    "Optional: darken --escalation or bold the risk badge text for WCAG AA contrast."
+  ],
+  "critical_code_review_comments": [
+    "All 6 targeted fixes are correctly implemented: tailwind escalation token registered (verified computed styles), App.js /auth + / guards use user.is_admin, Chat.js MessageText renders **bold** to <strong>, CheckinBanner onUse pushes the assistant message + focuses inputRef, PrivateModeInput Pydantic model rejects junk bodies with 422, provider-settings/openrouter-models now 400 without a key.",
+    "server.py PUT /api/memories, DELETE /api/admin/professionals and PUT /api/admin/safety-events/{id}/resolve still ignore matched_count/deleted_count — inconsistent with the newly fixed memory DELETE."
+  ],
+  "updated_files": ["/app/backend/tests/test_fixes_iteration2.py"],
+  "success_rate": {"backend": "92% (33/36 pytest; 3 failures are known minor 404-semantics issues)", "frontend": "100% of the 4 fixes + regression flows verified"},
+  "seed_data_creation": "Created UI test user qa_it2_1787631357@campionqa.com (Test@12345, US, daily) and API-seeded qa_it2b_1787631623@campionqa.com (Test@12345, US, daily, private mode left ON). One extra high-risk safety event logged for test@campionai.com.",
+  "should_call_test_agent_after_fix": false,
+  "should_main_agent_self_test": true,
+  "test_credentials": "admin@campionai.com / Admin@12345; test@campionai.com / Test@12345; qa_it2b_1787631623@campionqa.com / Test@12345 (private mode ON)",
+  "context_for_next_testing_agent": "Verified in iteration 2: (1) admin login goes straight to /admin; (2) non-admin visiting /admin redirects to /chat; (3) 'high' risk badge bg=rgb(216,115,85) white text - visible; escalation-card border rgba(216,115,85,0.3) bg 0.06; delete confirm button bg=rgb(216,115,85); onboarding safety card tinted; (4) high-risk reply renders <strong>988 Suicide & Crisis Lifeline</strong>, no literal '**'; (5) CheckinBanner Reply adds the check-in as an ai-message, sends NO user message, and focuses chat-input; (6) 'Load available models' shows red toast 'Add an OpenRouter API key first.'; (7) private-mode-toggle lives in the Memory drawer (not SettingsDialog) and works; (8) register->onboarding(4 steps)->chat streaming + memory extraction OK. Correct testids: chat-send-button (not send-button), onb-tc-name/onb-tc-relationship/onb-tc-phone/onb-tc-email, onb-consent-checkbox, admin-tab-safety, load-models-button. Do NOT click auth-toggle-mode when logging in - /auth defaults to login mode.",
+  "rca_of_the_issue": "N/A - retest confirmed the fixes. Remaining 3 pytest failures stem from mongo update/delete results not being checked (matched_count/deleted_count) on three endpoints that were out of scope for this iteration's fix."
+}

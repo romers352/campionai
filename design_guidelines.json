@@ -1,0 +1,107 @@
+{
+  "typography": {
+    "headings": {
+      "family": "Manrope",
+      "weights": ["300", "500", "800"],
+      "usage": "Use Manrope for all H1-H4 elements. Never use Inter. Keep letter spacing tight (tracking-tight) for large headers to maintain an Apple-grade clean aesthetic."
+    },
+    "body": {
+      "family": "Figtree",
+      "weights": ["400", "500", "600"],
+      "usage": "Use Figtree for all body text, chat messages, and UI labels. It offers exceptional legibility and a soft, friendly curve."
+    },
+    "hierarchy": {
+      "h1": "text-4xl sm:text-5xl tracking-tight leading-none",
+      "h2": "text-2xl sm:text-3xl tracking-tight leading-tight",
+      "h3": "text-xl sm:text-2xl",
+      "body": "text-base leading-relaxed",
+      "small": "text-sm tracking-wide text-muted-foreground"
+    }
+  },
+  "colors": {
+    "archetype": "Organic & Earthy / Apple Glass",
+    "light_mode": {
+      "background": "#FDFBF7",
+      "surface": "#FFFFFF",
+      "primary": "#8A9A86",
+      "text_main": "#1C1C1C",
+      "text_muted": "#6B6B6B",
+      "border": "#E5E5E5",
+      "escalation_warm": "#D97757"
+    },
+    "dark_mode": {
+      "background": "#121212",
+      "surface": "#1A1A1A",
+      "primary": "#A3B59E",
+      "text_main": "#EDEDED",
+      "text_muted": "#A0A0A0",
+      "border": "#2C2C2C",
+      "escalation_warm": "#E88B6D"
+    },
+    "forbidden": ["#7351B7", "#1B93A4", "pure #000000", "pure #FFFFFF for backgrounds"],
+    "rules": "The UI must feel like a calming space. Use 'Liquid Glass' (backdrop-blur-xl with highly transparent backgrounds) over any images. Never use solid glaring reds for escalations; use the 'escalation_warm' terracotta to signal importance without panic."
+  },
+  "visual_enhancers": {
+    "glassmorphism": "Use 'Optical Clarity' glassmorphism (backdrop-blur-2xl bg-white/70 light, bg-black/60 dark, border-white/20) for sticky headers, floating navs, and proactive check-in overlays.",
+    "borders": "Use capsule geometry (fully rounded pill shapes for buttons, tags, and inputs). Replace hard dividers with subtle blurs or 1px border-black/5 (light) / border-white/5 (dark).",
+    "shadows": "Ambient diffuse shadows. shadow-[0_8px_32px_rgba(0,0,0,0.04)] for standard cards. No harsh drop shadows."
+  },
+  "grids_and_layouts": {
+    "spacing": "Generous. Use p-8 to p-12 for containers. Let the UI breathe. The chat interface should be centrally constrained (max-w-3xl) but with vast negative space around it.",
+    "dashboard_admin": "Use Mode B: High Density Grid (grid-cols-1 md:grid-cols-4). Tight gaps (gap-4). Cardless approach for data tables to look strictly functional and clean.",
+    "proactive_cards": "Use Bento grid (grid-cols-1 md:grid-cols-8) with wide gaps (gap-8) to display daily check-ins organically rather than rigid lists."
+  },
+  "component_usage": {
+    "forms_and_inputs": "Shadcn UI (Input, Form, Checkbox, Select). Customize the border radius to full (capsule) and remove harsh focus rings. Focus states should use a soft primary ring.",
+    "chat_interface": "Custom layout. Avoid standard generic 'chat bubbles'. Use a beautiful staggered layout where user text is right-aligned in a soft capsule, and CampionAI is left-aligned with no bubble, just clean typography and an avatar, providing a manuscript feel.",
+    "memory_controls": "Shadcn Tabs and Dialogs for the 'Memory System'. Ensure the 'Private Mode' toggle is a highly tactile, Apple-style switch component.",
+    "toasts": "Sonner (located at /app/frontend/src/components/ui/sonner.js). Use for 'Memory saved' or 'Check-in scheduled' feedback."
+  },
+  "motion": {
+    "libraries": ["framer-motion"],
+    "rules": "Soft motion only. Entrances should be slight vertical drifts (translateY 10px to 0) with opacity fades. The 'AI generating' state should NOT be a pulsing three-dot loader, but a multi-color shimmer animation (LinearGradient with hue rotation) on a capsule that fades immediately once the text appears.",
+    "transitions": "transition: transform 0.4s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.4s ease."
+  },
+  "accessibility": {
+    "contrast": "Text must meet APCA or WCAG AA standard (4.5:1).",
+    "focus": "Clear but soft focus rings. No element should lose visibility on hover.",
+    "data_testid": "MANDATORY. All interactive elements must include a data-testid attribute in kebab-case based on role (e.g., data-testid='chat-submit-button', data-testid='private-mode-toggle')."
+  },
+  "media": {
+    "rules": "Never use placeholder images. Images should only be used for the Proactive Check-in cards or Onboarding aesthetic backgrounds.",
+    "image_urls": {
+      "morning_checkin_bg": {
+        "url": "https://images.pexels.com/photos/35962922/pexels-photo-35962922.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940",
+        "description": "Warm sunlight casting shadows. Use as an ambient background for the morning check-in flow."
+      },
+      "peaceful_memory_state": {
+        "url": "https://images.pexels.com/photos/6871899/pexels-photo-6871899.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940",
+        "description": "Single tree on a verdant hill. Use in the 'Memory / Profile' empty states to create a calming vibe."
+      }
+    }
+  },
+  "instructions_to_main_agent": [
+    "You have .js files not .tsx files. Ensure all React components are built as .js files with functional components.",
+    "Install required icon libraries: yarn add @phosphor-icons/react (best for the calm, duotone Apple feel).",
+    "Do NOT use 'transparent' background on headers or floating navigation. Always apply a backdrop-blur and semi-transparent color (Liquid Glass).",
+    "Ensure 'CampionAI' always feels human, calm, and spacious.",
+    "Never build generic centered layouts. Use optical alignment and subtle asymmetry for the marketing/onboarding phases."
+  ],
+  "UNIVERSAL_GUIDELINES_FOR_MAIN_AGENT": [
+    "You tend to converge toward generic, 'on distribution' outputs. In frontend design, this creates the 'AI slop' aesthetic. Avoid this: make creative, distinctive frontends that surprise and delight.",
+    "Dark colors look good when used independently without gradients. DO NOT use dark colors as gradients.",
+    "Don't make generic centered layouts, simplistic gradients, and uniform styling.",
+    "Create depth through layered design elements with z-index hierarchy.",
+    "Use glass-morphism effects with backdrop filters (12-24px blur).",
+    "You MUST NOT apply universal transition (e.g., transition: all). Always add transitions for specific interactive elements excluding transforms.",
+    "You MUST NOT center align the app container, i.e. do not add .App { text-align: center; } in the css file. This disrupts the human natural reading flow of text.",
+    "Always use modern button styles like pill-shaped, or sharp button with interaction animations & color relevant to the app style.",
+    "NEVER: use AI assistant Emoji characters like 🤖🧠💭💡🔮🎯 etc for icons.",
+    "Every interaction needs micro-animations - hover states, transitions, parallax effects, and entrance animations. Static = dead.",
+    "Use 2-3x more spacing than feels comfortable. Cramped designs look cheap.",
+    "Subtle grain textures, noise overlays, custom cursors, selection states, and loading animations: separates good from extraordinary.",
+    "Missing categories = main agent will use placeholder text which is FORBIDDEN.",
+    "Prioritize using pre-existing components from src/components/ui when applicable.",
+    "Use sonner for toasts. Sonner component are located in /app/frontend/src/components/ui/sonner.js."
+  ]
+}

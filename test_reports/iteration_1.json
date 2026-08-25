@@ -1,0 +1,68 @@
+{
+  "summary": "Full e2e test of CampionAI. Backend: created pytest suite (26 tests) covering auth/register/login/me, onboarding consent validation, profile, private mode, hotlines, SSE chat streaming, memory extraction/delete, private-mode no-persist, high-risk escalation (988 + trusted contact + professional + safety event), handoff, check-in scheduling, session isolation, data export, delete-everything, and all admin routes incl. RBAC — 26/26 passed. Frontend: Playwright e2e over register->onboarding(4 steps)->chat streaming->history persistence->memory drawer/forget/private toggle->handoff dialog->high-risk escalation card->settings profile edit/export/delete-everything->admin panel (stats, model routing, provider settings, professionals CRUD, safety events + resolve)->auth guards->mobile. All core flows work. 4 frontend defects found (1 high: broken 'escalation' theme color; 1 medium: admin login lands on /chat not /admin; 2 minor).",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "PUT/DELETE /api/memories/{id}, DELETE /api/sessions/{id}, DELETE /api/admin/professionals/{id}, PUT /api/admin/safety-events/{id}/resolve", "issue": "Always return {ok:true} even when the id does not exist / belongs to another user. Should return 404 on no-match (matched_count/deleted_count == 0)."},
+      {"endpoint": "PUT /api/settings/private-mode", "issue": "Accepts a raw `dict` body instead of a Pydantic model — no input validation (any junk body silently sets private_mode=False)."},
+      {"endpoint": "GET /api/checkin", "issue": "A GET has a write side-effect (sets last_checkin) and calls the LLM. Two concurrent tab loads => one check-in message is generated and thrown away. Consider POST /api/checkin/ack or returning the message before marking consumed."},
+      {"endpoint": "GET /api/admin/openrouter-models", "issue": "With no OpenRouter key configured it returns {models: []} (200) instead of an error, so the admin UI shows a green success toast '0 OpenRouter models loaded'. Should 400 with 'Add an OpenRouter key first'."},
+      {"endpoint": "PUT /api/admin/provider-settings", "issue": "Allows switching llm_provider to 'openrouter' with no key stored. Every LLM call then raises RuntimeError('OpenRouter API key not configured') -> chat degrades to the generic fallback line, memory extraction silently returns [] and the model safety verifier is skipped (keyword net only). Validate that a key exists before allowing the switch."},
+      {"endpoint": "CORS middleware", "issue": "allow_origins defaults to '*' together with allow_credentials=True (browser-invalid combo for credentialed requests); acceptable now (token in header) but should be pinned."},
+      {"endpoint": "CHECKIN_INTERVALS", "issue": "'user_set' maps to None so it behaves exactly like 'off' — a user-set frequency can never become due (dead config value)."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "tailwind.config.js theme", "issue": "The `escalation` color is defined as a CSS var (--escalation) but NOT registered in tailwind.config.js theme.colors. All 15 usages of bg-escalation / text-escalation / border-escalation across EscalationCard, Admin, Onboarding, Chat, SettingsDialog, MemoryDrawer are no-op classes. Verified computed style of the admin 'high' risk badge: color rgb(255,255,255) on background rgba(0,0,0,0) => the word 'high' is INVISIBLE. Also: 'Delete everything' confirm button is not red, onboarding safety card has no warning tint, trash hover colors do nothing.", "selector": "[data-testid^='event-'] .rounded-full (Badge 'high'), [data-testid='confirm-delete-everything']", "priority": "HIGH"},
+      {"component": "Auth.js / App.js route guard", "issue": "Admin login never lands on /admin. Auth.js does navigate('/admin') for is_admin, but the /auth route element is `user ? <Navigate to='/chat'/> : <Auth/>`, which re-renders first and wins the race — admin is dropped on /chat and must click the 'Admin panel' nav item. Reproduced twice.", "selector": "[data-testid='auth-submit-button']", "priority": "MEDIUM"},
+      {"component": "Chat.js assistant message", "issue": "Assistant replies are rendered as raw text, so LLM markdown leaks through — e.g. '**988 Suicide & Crisis Lifeline**' displays with literal asterisks in a crisis reply. Render markdown (or instruct the model to emit plain text).", "selector": "[data-testid='ai-message']", "priority": "MEDIUM"},
+      {"component": "CheckinBanner 'Reply' button", "issue": "onUse sends the hardcoded placeholder string 'About your check-in: ' as the user's first message (verified: user bubble literally reads 'About your check-in:' and the session title becomes that). Should focus the composer (or send the check-in context invisibly) instead.", "selector": "[data-testid='checkin-reply-button']", "priority": "MEDIUM"},
+      {"component": "Chat.js NavContent", "issue": "Testability: NavContent is rendered twice (desktop aside + mobile Sheet), so data-testids like open-memory-button/open-settings-button/new-chat-button/session-* are duplicated in the DOM. Playwright's first match resolves to the hidden desktop copy on mobile viewports. Suggest suffixing testids per surface.", "selector": "[data-testid='open-memory-button']", "priority": "LOW"}
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Admin > Safety events", "issues": ["High-risk badge label invisible (white text, no background) because of the missing tailwind 'escalation' color — high-risk events are visually indistinguishable from handoff requests"]},
+      {"screen": "Settings > Data & privacy", "issues": ["'Delete everything' destructive action has no red/danger styling (bg-escalation class is inert), so the most dangerous action looks identical to the benign ones"]},
+      {"screen": "Admin > Models & routing", "issues": ["Model id input only saves on blur with no visible save affordance; a user who types and immediately navigates/reloads loses the change (initially looked like a persistence bug — confirmed it does persist after blur)"]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/conftest.py",
+    "/app/backend/tests/test_health.py",
+    "/app/backend/tests/test_auth_onboarding.py",
+    "/app/backend/tests/test_chat_safety.py",
+    "/app/backend/tests/test_admin.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [
+    "Register `escalation: 'hsl(var(--escalation))'` in tailwind.config.js theme.extend.colors (fixes 15 broken class usages incl. the invisible high-risk badge and the non-red delete button).",
+    "Fix admin post-login redirect: let the /auth guard respect is_admin (e.g. `user ? <Navigate to={user.is_admin ? '/admin' : '/chat'}/>`) or navigate after the guard.",
+    "Render assistant messages as markdown so crisis replies don't show literal ** asterisks.",
+    "Change CheckinBanner 'Reply' to focus the composer instead of sending the placeholder text 'About your check-in: '.",
+    "Return 404 from memory/session/professional/safety-event mutations when the id does not match.",
+    "Validate an OpenRouter key exists before allowing llm_provider='openrouter'; make /admin/openrouter-models 400 without a key.",
+    "Replace the raw dict body on PUT /api/settings/private-mode with a Pydantic model."
+  ],
+  "critical_code_review_comments": [
+    "tailwind.config.js is missing the escalation color token while index.css defines --escalation — silent styling failure across 6 components; add the token (and a lint rule / safelist) to prevent recurrence.",
+    "App.js `/auth` route guard unconditionally redirects logged-in users to /chat, defeating Auth.js's role-based navigate('/admin'). Centralise post-login routing in one place.",
+    "server.py chat_stream runs classify_message (LLM) synchronously before the first token is emitted, adding full round-trip latency to time-to-first-token for every message; consider classifying on the keyword layer first and verifying with the model in parallel with generation.",
+    "extract_memories/delete/update mongo ops ignore matched_count/deleted_count — endpoints report success for non-existent or other-users' resources (no data leak, but wrong status codes).",
+    "GET /api/checkin mutates state (last_checkin) — non-idempotent GET; a double render/tab will consume the check-in."
+  ],
+  "updated_files": [
+    "/app/backend/tests/conftest.py",
+    "/app/backend/tests/test_health.py",
+    "/app/backend/tests/test_auth_onboarding.py",
+    "/app/backend/tests/test_chat_safety.py",
+    "/app/backend/tests/test_admin.py"
+  ],
+  "success_rate": {"backend": "100% (26/26 pytest)", "frontend": "~90% (all core flows pass; 4 UI defects, 1 high)"},
+  "seed_data_creation": "Created several TEST_/qa_ prefixed users via /api/auth/register (auto-cleaned by delete-everything where applicable); one UI user qa_ui2_1787630725@campionqa.com / Test@12345 (country IN) and qa_nonb_* (non-onboarded) remain for reuse. Admin model-config 'cheap' tier was temporarily changed and restored to gpt-5.4-mini; provider settings restored to 'emergent'. Verified professional seed (Dr. Maya Reyes) untouched.",
+  "should_call_test_agent_after_fix": true,
+  "should_main_agent_self_test": false,
+  "test_credentials": "admin@campionai.com / Admin@12345 (works, but lands on /chat after login — click 'Admin panel'). UI test user: qa_ui2_1787630725@campionqa.com / Test@12345 (onboarded, country=IN). test@campionai.com / Test@12345 also exists.",
+  "context_for_next_testing_agent": "Backend suite lives in /app/backend/tests/ (conftest + 4 files, run with `cd /app/backend && python -m pytest tests/ -v`); note pytest.ini forces -n 2 --dist loadscope, so keep per-module fixtures. IMPORTANT: email domains ending in .test/.example are rejected by pydantic EmailStr — use @campionqa.com style domains for generated users. Chat SSE contract verified: meta -> delta* -> done{escalation,memories_saved,risk}. Verified working: full onboarding, streaming chat, memory extract/forget, private mode, US(988) and IN(KIRAN/AASRA/Tele-MANAS) hotlines, escalation card, handoff dialog, check-in banner, export, delete-everything, admin CRUD + resolve, all auth guards. Not retested after fixes: tailwind escalation color, admin login redirect, markdown rendering, checkin Reply button.",
+  "rca_of_the_issue": "1) Invisible high-risk badge: index.css declares --escalation but tailwind.config.js never maps it to a color token, so `bg-escalation` is an unknown utility; tailwind-merge inside cn() still strips the preceding bg-primary, leaving white text on a transparent background (verified via getComputedStyle: color rgb(255,255,255), background rgba(0,0,0,0)). 2) Admin redirect: Auth.js calls navigate('/admin') after login, but setting the auth user re-renders App and the still-mounted /auth route returns <Navigate to='/chat' replace/>, which executes last and wins. 3) Model-routing 'persistence failure' seen in the first run was a test artifact — the input only saves onBlur and page.fill() does not blur; after pressing Tab the value persists across reload."
+}
