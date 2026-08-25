@@ -1,107 +1,97 @@
 {
+  "theme_name": "Obsidian & Platinum",
+  "concept": "Dark, sleek & modern. Minimal & premium. Moving away from earthy/soft to a cinematic, highly-restrained luxury aesthetic. A text-first AI companion that feels like an intimate late-night conversation, backed by a tactical, high-density admin panel.",
+  "tech_instructions": {
+    "files": "Use pure JavaScript (.jsx / .js), DO NOT output TypeScript (.tsx / .ts)."
+  },
   "typography": {
-    "headings": {
-      "family": "Manrope",
-      "weights": ["300", "500", "800"],
-      "usage": "Use Manrope for all H1-H4 elements. Never use Inter. Keep letter spacing tight (tracking-tight) for large headers to maintain an Apple-grade clean aesthetic."
+    "fonts": {
+      "headings": "Cormorant Garamond, serif",
+      "body": "Outfit, sans-serif",
+      "mono": "JetBrains Mono, monospace"
     },
-    "body": {
-      "family": "Figtree",
-      "weights": ["400", "500", "600"],
-      "usage": "Use Figtree for all body text, chat messages, and UI labels. It offers exceptional legibility and a soft, friendly curve."
-    },
-    "hierarchy": {
-      "h1": "text-4xl sm:text-5xl tracking-tight leading-none",
-      "h2": "text-2xl sm:text-3xl tracking-tight leading-tight",
-      "h3": "text-xl sm:text-2xl",
-      "body": "text-base leading-relaxed",
-      "small": "text-sm tracking-wide text-muted-foreground"
-    }
+    "rules": [
+      "No Inter, Roboto, or generic sans-serifs for headings.",
+      "Headings (H1/H2) MUST use Cormorant Garamond with tight tracking (`tracking-tight`) and `font-light` to `font-medium` weights to feel luxurious.",
+      "AI chat responses should use Cormorant Garamond at a slightly larger size (text-lg or text-xl) to give the AI a distinct, sophisticated 'voice', while user messages use Outfit.",
+      "Admin panel data, timestamps, and model routing info MUST use JetBrains Mono for a tactical, precise look."
+    ]
   },
   "colors": {
-    "archetype": "Organic & Earthy / Apple Glass",
-    "light_mode": {
-      "background": "#FDFBF7",
-      "surface": "#FFFFFF",
-      "primary": "#8A9A86",
-      "text_main": "#1C1C1C",
-      "text_muted": "#6B6B6B",
-      "border": "#E5E5E5",
-      "escalation_warm": "#D97757"
+    "background": "#0A0A0B (Void Black)",
+    "surfaces": {
+      "base": "#121214 (Elevated background)",
+      "glass": "bg-white/[0.03] backdrop-blur-2xl (For sidebars, floating headers, check-in banners)",
+      "border": "#27272A (Zinc-800 subtle border for structural lines)"
     },
-    "dark_mode": {
-      "background": "#121212",
-      "surface": "#1A1A1A",
-      "primary": "#A3B59E",
-      "text_main": "#EDEDED",
-      "text_muted": "#A0A0A0",
-      "border": "#2C2C2C",
-      "escalation_warm": "#E88B6D"
+    "text": {
+      "primary": "#FAFAFA (Platinum White for absolute clarity)",
+      "secondary": "#A1A1AA (Zinc 400 for metadata and inactive states)"
     },
-    "forbidden": ["#7351B7", "#1B93A4", "pure #000000", "pure #FFFFFF for backgrounds"],
-    "rules": "The UI must feel like a calming space. Use 'Liquid Glass' (backdrop-blur-xl with highly transparent backgrounds) over any images. Never use solid glaring reds for escalations; use the 'escalation_warm' terracotta to signal importance without panic."
-  },
-  "visual_enhancers": {
-    "glassmorphism": "Use 'Optical Clarity' glassmorphism (backdrop-blur-2xl bg-white/70 light, bg-black/60 dark, border-white/20) for sticky headers, floating navs, and proactive check-in overlays.",
-    "borders": "Use capsule geometry (fully rounded pill shapes for buttons, tags, and inputs). Replace hard dividers with subtle blurs or 1px border-black/5 (light) / border-white/5 (dark).",
-    "shadows": "Ambient diffuse shadows. shadow-[0_8px_32px_rgba(0,0,0,0.04)] for standard cards. No harsh drop shadows."
-  },
-  "grids_and_layouts": {
-    "spacing": "Generous. Use p-8 to p-12 for containers. Let the UI breathe. The chat interface should be centrally constrained (max-w-3xl) but with vast negative space around it.",
-    "dashboard_admin": "Use Mode B: High Density Grid (grid-cols-1 md:grid-cols-4). Tight gaps (gap-4). Cardless approach for data tables to look strictly functional and clean.",
-    "proactive_cards": "Use Bento grid (grid-cols-1 md:grid-cols-8) with wide gaps (gap-8) to display daily check-ins organically rather than rigid lists."
-  },
-  "component_usage": {
-    "forms_and_inputs": "Shadcn UI (Input, Form, Checkbox, Select). Customize the border radius to full (capsule) and remove harsh focus rings. Focus states should use a soft primary ring.",
-    "chat_interface": "Custom layout. Avoid standard generic 'chat bubbles'. Use a beautiful staggered layout where user text is right-aligned in a soft capsule, and CampionAI is left-aligned with no bubble, just clean typography and an avatar, providing a manuscript feel.",
-    "memory_controls": "Shadcn Tabs and Dialogs for the 'Memory System'. Ensure the 'Private Mode' toggle is a highly tactile, Apple-style switch component.",
-    "toasts": "Sonner (located at /app/frontend/src/components/ui/sonner.js). Use for 'Memory saved' or 'Check-in scheduled' feedback."
-  },
-  "motion": {
-    "libraries": ["framer-motion"],
-    "rules": "Soft motion only. Entrances should be slight vertical drifts (translateY 10px to 0) with opacity fades. The 'AI generating' state should NOT be a pulsing three-dot loader, but a multi-color shimmer animation (LinearGradient with hue rotation) on a capsule that fades immediately once the text appears.",
-    "transitions": "transition: transform 0.4s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.4s ease."
-  },
-  "accessibility": {
-    "contrast": "Text must meet APCA or WCAG AA standard (4.5:1).",
-    "focus": "Clear but soft focus rings. No element should lose visibility on hover.",
-    "data_testid": "MANDATORY. All interactive elements must include a data-testid attribute in kebab-case based on role (e.g., data-testid='chat-submit-button', data-testid='private-mode-toggle')."
-  },
-  "media": {
-    "rules": "Never use placeholder images. Images should only be used for the Proactive Check-in cards or Onboarding aesthetic backgrounds.",
-    "image_urls": {
-      "morning_checkin_bg": {
-        "url": "https://images.pexels.com/photos/35962922/pexels-photo-35962922.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940",
-        "description": "Warm sunlight casting shadows. Use as an ambient background for the morning check-in flow."
-      },
-      "peaceful_memory_state": {
-        "url": "https://images.pexels.com/photos/6871899/pexels-photo-6871899.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940",
-        "description": "Single tree on a verdant hill. Use in the 'Memory / Profile' empty states to create a calming vibe."
-      }
+    "accents": {
+      "primary": "#FFFFFF (Stark white for primary CTA buttons - pure monochrome contrast)",
+      "ai_indicator": "#71717A (Subtle silver/zinc for AI typing states)",
+      "safety_escalation": "#E11D48 (Signal Red - CRITICAL requirement for risk classifier/escalation. Must contrast heavily against dark UI. Used for check-ins, human handoff, and crisis hotline links)."
     }
   },
-  "instructions_to_main_agent": [
-    "You have .js files not .tsx files. Ensure all React components are built as .js files with functional components.",
-    "Install required icon libraries: yarn add @phosphor-icons/react (best for the calm, duotone Apple feel).",
-    "Do NOT use 'transparent' background on headers or floating navigation. Always apply a backdrop-blur and semi-transparent color (Liquid Glass).",
-    "Ensure 'CampionAI' always feels human, calm, and spacious.",
-    "Never build generic centered layouts. Use optical alignment and subtle asymmetry for the marketing/onboarding phases."
-  ],
-  "UNIVERSAL_GUIDELINES_FOR_MAIN_AGENT": [
-    "You tend to converge toward generic, 'on distribution' outputs. In frontend design, this creates the 'AI slop' aesthetic. Avoid this: make creative, distinctive frontends that surprise and delight.",
-    "Dark colors look good when used independently without gradients. DO NOT use dark colors as gradients.",
-    "Don't make generic centered layouts, simplistic gradients, and uniform styling.",
-    "Create depth through layered design elements with z-index hierarchy.",
-    "Use glass-morphism effects with backdrop filters (12-24px blur).",
-    "You MUST NOT apply universal transition (e.g., transition: all). Always add transitions for specific interactive elements excluding transforms.",
-    "You MUST NOT center align the app container, i.e. do not add .App { text-align: center; } in the css file. This disrupts the human natural reading flow of text.",
-    "Always use modern button styles like pill-shaped, or sharp button with interaction animations & color relevant to the app style.",
-    "NEVER: use AI assistant Emoji characters like 🤖🧠💭💡🔮🎯 etc for icons.",
-    "Every interaction needs micro-animations - hover states, transitions, parallax effects, and entrance animations. Static = dead.",
-    "Use 2-3x more spacing than feels comfortable. Cramped designs look cheap.",
-    "Subtle grain textures, noise overlays, custom cursors, selection states, and loading animations: separates good from extraordinary.",
-    "Missing categories = main agent will use placeholder text which is FORBIDDEN.",
-    "Prioritize using pre-existing components from src/components/ui when applicable.",
-    "Use sonner for toasts. Sonner component are located in /app/frontend/src/components/ui/sonner.js."
+  "layouts": {
+    "landing": "Asymmetrical layout. Massive negative space. Hero image overlay max `bg-black/50`. Include 'Adults Only' and 'AI' disclaimers cleanly in typography, not hidden.",
+    "auth_and_onboarding": "Centered, narrow column Stepper (4 steps). Fade-in animations for each step. Input fields should be 'flushed' (only bottom border, no full box) to maintain a minimal, luxury aesthetic.",
+    "chat_interface": "DO NOT use generic iOS-style chat bubbles. The conversation is the hero. Left-aligned rolling log. AI messages occupy full width with serif typography and are explicitly labeled 'CampionAI'. User messages are indented right with a subtle left border. No background colors on messages, just pure text over the deep void background.",
+    "memory_drawer": "A sleek side panel (`w-80`) with glassmorphism. Private Mode toggle should be a stark, crisp switch.",
+    "admin_panel": "High Density Grid. 1px grid borders visible (`border-zinc-800`). No rounded corners on internal cards (sharp edges, tactical feel). Used for model routing, professionals CRUD, and safety events."
+  },
+  "components": {
+    "buttons": "Pill-shaped (`rounded-full`) for consumer app (chat, onboarding), sharp (`rounded-none`) for Admin panel. Primary buttons: `bg-white text-black hover:bg-zinc-200`. Escalation buttons: `bg-[#E11D48] text-white hover:bg-rose-700`.",
+    "inputs": "Minimal. For consumer: `border-b border-zinc-800 bg-transparent focus:border-white focus:ring-0`. No harsh white boxes.",
+    "cards": "Cardless design where possible. If a card is needed (like the Escalation Card), use `bg-white/[0.02] border border-zinc-800 backdrop-blur-md p-8`.",
+    "badges": "Always explicitly label AI. Use a small, tracking-widest uppercase badge `text-[10px] tracking-widest border border-zinc-700 px-2 py-1`."
+  },
+  "motion": {
+    "rules": [
+      "Fade and slight upward translate (`translate-y-2` to `0`) for new chat messages and onboarding steps.",
+      "Smooth width expansion for sidebar.",
+      "Pulse animation strictly reserved for the 'streaming' state of AI or active Safety Escalation alerts."
+    ]
+  },
+  "media": {
+    "rules": [
+      "Use abstract glass/shadow elements for marketing to maintain mystery and premium feel.",
+      "Use realistic, dramatic-lit portraits for human professionals."
+    ],
+    "image_urls": [
+      {
+        "category": "landing_hero",
+        "url": "https://images.unsplash.com/photo-1709625862266-014ef072fd93?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjAzNTl8MHwxfHNlYXJjaHwyfHxkYXJrJTIwYWJzdHJhY3QlMjBnbGFzcyUyMHJlZmxlY3Rpb258ZW58MHx8fHwxNzg3NjMxOTMwfDA&ixlib=rb-4.1.0&q=85",
+        "description": "Dark curved abstract glass reflection. Use as massive hero background with bg-black/40 overlay."
+      },
+      {
+        "category": "onboarding_background",
+        "url": "https://images.pexels.com/photos/36969840/pexels-photo-36969840.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940",
+        "description": "Dark architectural shadow on concrete. Use as subtle background texture for the auth/stepper."
+      },
+      {
+        "category": "professional_avatar_1",
+        "url": "https://images.unsplash.com/photo-1770894807442-108cc33c0a7a?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA1ODR8MHwxfHNlYXJjaHwyfHxwcm9mZXNzaW9uYWwlMjBwb3J0cmFpdCUyMGRhcmslMjBiYWNrZ3JvdW5kfGVufDB8fHx8MTc4NzYzMTkzMHww&ixlib=rb-4.1.0&q=85",
+        "description": "Young male professional portrait, dark lighting. Use in Human-handoff and Admin Professionals CRUD."
+      },
+      {
+        "category": "professional_avatar_2",
+        "url": "https://images.pexels.com/photos/27015641/pexels-photo-27015641.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940",
+        "description": "Elegant female professional, dark background. Use in Human-handoff."
+      }
+    ]
+  },
+  "universal_guidelines_for_main_agent": [
+    "No generic AI slop. DO NOT use emojis for icons (e.g., no 🤖). Use pure lucide-react or phosphor icons.",
+    "Use 2x-3x more padding than usual. e.g., p-8 to p-12 on containers/wrappers.",
+    "Never apply `transition: all`. Target specific properties like `transition-opacity` or `transition-transform`.",
+    "Implement `data-testid` on ALL interactive elements (buttons, inputs, toggles, chat bubbles, admin rows).",
+    "Never use purely transparent backgrounds on drop-downs, sticky headers, or modals. Always use a solid dark color or `bg-black/60 backdrop-blur-xl`.",
+    "Use `sonner` for all toast notifications.",
+    "Prioritize pre-existing shadcn/ui components but heavily customize them via Tailwind to match this dark premium aesthetic (e.g., make them borderless or 0px radius depending on context).",
+    "Do not use generic grid cards for the chat UI. Text should breathe on the canvas.",
+    "Always use JS/JSX, never TS/TSX.",
+    "Ensure 'Signal Red' (#E11D48) is strictly reserved for the Safety Net / Risk Escalation / Crisis Hotline flows to create immediate visual hierarchy."
   ]
 }

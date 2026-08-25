@@ -33,20 +33,26 @@ A privacy-first, multimodal AI daily companion that feels like a trusted close f
 - [x] Warm streaming companion chat with personality + memory + recent-transcript context.
 - [x] Model router (Emergent OpenAI/Anthropic + OpenRouter), admin-configurable tiers + OpenRouter model search.
 - [x] Memory decision engine + Memory drawer (view/forget) + Private Mode toggle.
-- [x] Safety classifier + hard escalation UI (EscalationCard: hotlines + trusted contact + professional) + audit.
+- [x] Safety classifier + hard escalation UI + audit; escalation copy reflects real delivery state.
 - [x] Human handoff (consented summary) dialog.
-- [x] Proactive daily check-in engine + banner.
+- [x] Proactive daily check-in engine + banner (now personalized w/ recent moments).
 - [x] Data export (JSON download) + delete-everything.
-- [x] Admin panel: stats, model routing, provider/OpenRouter settings, professionals CRUD, safety-event review/resolve.
-- [x] Tested: iteration_1 (backend 26/26, frontend core), iteration_2 (all fixes verified).
+- [x] Admin panel: stats, model routing, provider/OpenRouter settings, professionals CRUD, safety-event review, Voice & alerts tab + integration status.
+- [x] **REDESIGN → "Obsidian & Platinum"** dark premium theme (Cormorant Garamond serif, Outfit, JetBrains Mono; Signal Red reserved for safety; cardless chat, flushed inputs, sharp admin).
+- [x] **Real Alerts**: Resend email + Twilio SMS to trusted contact & professional on escalation/handoff (graceful degradation; light up when keys added).
+- [x] **Voice**: browser Web Speech STT (mic) + Fish Audio TTS playback (speaker toggle; admin-configurable; off until key added).
+- [x] **CampionAI Plus (paid wellness)**: Stripe (emergentintegrations Flow B, test key) monthly ($9) + yearly ($86.40), app-managed 14-day free trial, one-time donations ($5/$15/$30). AI daily plan (meditation/yoga/breathing/tasks), natural-language food logging w/ AI macro estimate + totals, cal.com-style daily schedule, proactive coaching woven into chat. 402-gated behind active Plus.
+- [x] Tested: iterations 1-4 (backend 75/75; frontend 100% of flows). Security: payment-status endpoint auth+ownership enforced.
 
 ## Backlog
-- **P1:** Real trusted-contact/professional notifications (email/SMS) — currently surfaced in-app + logged only. Wire OpenRouter key for production model routing.
-- **P1 (v1.5):** Personal-state signals surfaced gently; richer memory editing; check-in scheduler as background job (make GET /api/checkin idempotent / move to POST).
-- **P2 (v2 Voice):** streaming ASR/TTS, barge-in, voice sessions sharing memory.
+- **P1:** Provide production keys — Resend (email), Twilio (SMS), Fish Audio (voice), and a supported-country Stripe account to enable true recurring subscriptions (currently app-managed periods because Flow A sandbox is blocked for country NP).
+- **P1:** True Stripe subscription mode + customer portal + auto-renew (replace app-managed periods) once a supported Stripe account is claimed.
+- **P2 (Voice):** streaming ASR/TTS, barge-in, voice sessions sharing memory.
 - **P2.5 Vision:** photo sharing + optional visual memory (object storage, encrypted).
 - **P3 Teens / P4 B2B & self-hosted inference.**
+- Housekeeping (optional): split server.py into payments/plus/wellness routers.
 
 ## Known Notes
-- Trusted-contact alert + professional handoff are **surfaced in-app and audited only** — no real SMS/email is sent in v1 (by design).
-- `GET /api/checkin` has a write side-effect (consumes check-in) — acceptable for MVP, move to background job later.
+- Trusted-contact/professional alerts + voice TTS require keys — until added they are surfaced in-app/logged (email/SMS) or disabled (voice).
+- Stripe runs in TEST mode (card 4242 4242 4242 4242). Trial + access are app-managed; donations & payments are real test-mode checkouts.
+- `GET /api/checkin` has a write side-effect — acceptable for MVP.

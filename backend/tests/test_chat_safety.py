@@ -102,7 +102,9 @@ def test_high_risk_escalation(api, register_user, client):
     evs = ev.json()
     assert len(evs) >= 1
     assert evs[0]["risk_level"] == "high"
-    assert any("Trusted contact alerted" in a for a in evs[0]["actions_taken"])
+    # actions_taken now uses notifications.summarize() wording (graceful when no delivery keys)
+    assert any("Trusted contact" in a for a in evs[0]["actions_taken"])
+    assert any("alert queued (delivery not configured)" in a or "alert sent via" in a for a in evs[0]["actions_taken"])
 
 
 def test_handoff(api, user_headers, client):

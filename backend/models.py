@@ -106,3 +106,36 @@ class ProviderSettings(BaseModel):
 
 class PrivateModeInput(BaseModel):
     enabled: bool
+
+
+class VoiceSettingsInput(BaseModel):
+    enabled: bool = True
+    voice_id: Optional[str] = None
+    fish_audio_api_key: Optional[str] = None
+
+
+class TTSInput(BaseModel):
+    text: str
+
+
+# ---------- Payments & Wellness ----------
+class CheckoutInput(BaseModel):
+    package_id: str
+    origin_url: str
+
+
+class FoodInput(BaseModel):
+    text: str
+    date: Optional[str] = None
+
+
+class EventInput(BaseModel):
+    title: str
+    start: str
+    end: Optional[str] = None
+    type: Optional[str] = "task"
+    notes: Optional[str] = None
+
+
+class PlanItemToggle(BaseModel):
+    item_index: int

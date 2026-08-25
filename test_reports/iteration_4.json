@@ -1,0 +1,48 @@
+{
+  "summary": "Iteration 4 (CampionAI Plus + payments) tested end-to-end. Backend: new pytest suite (23 tests) for Plus gating (402), 14-day app-managed trial, wellness plan generate/toggle/regenerate, AI food macro logging + totals + delete, schedule CRUD/sorting, Stripe Flow B checkout (plus_monthly/plus_yearly/donate_15) + status polling, cross-user isolation, and chat streaming for a Plus user. Full backend suite = 75/75 passed. Frontend: full UI journey (register @campionqa.com -> 4-step onboarding -> chat -> Upgrade to Plus -> paywall -> start trial -> 3 tabs) all passed; Stripe redirect verified for Subscribe monthly and Donate $15 (checkout.stripe.com URLs); payment cancel + success(pending->'Still processing') pages render; unauth /wellness redirects to /auth; regression (escalation card with 3 hotlines + 'Trusted contact on file' + verified professional, handoff dialog, mic-button present, voice-toggle hidden, admin login with all 4 tabs) passed. Mobile 390px: no horizontal overflow. No blocking bugs found.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "GET /api/payments/status/{session_id}", "issue": "No authentication/ownership check. Any caller holding a session_id can poll status and trigger _grant_access for another user's transaction. Session ids are secret-ish, but add Depends(get_current_user) + user_id match."},
+      {"endpoint": "POST /api/payments/checkout -> _grant_access", "issue": "_grant_access sets plus.trial_used=True when a subscription is paid, so a user who pays first can never later use the free 14-day trial (start-trial then returns 400). Confirm this is intended."},
+      {"endpoint": "GET /api/wellness/events", "issue": "Without ?date it returns ALL events for the user (limit 500) with no pagination; will grow unbounded over time."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [
+      {"flow": "Wellness page load (Plus user)", "issue": "loadPlusData() has no try/catch — if /wellness/plan (LLM) fails, the promise rejects silently and the page stays empty with no error state/retry UI. All other calls (toggle, delFood, addEvent, delEvent) also lack error handling/toasts.", "affected_selectors": ["[data-testid=\"wellness-tab-plan\"]", "[data-testid=\"toggle-item-0\"]"]},
+      {"flow": "Regenerate plan", "issue": "Cosmetic/UX: regenerate returns a new plan doc (verified new id in backend) but the LLM often produces near-identical titles, so the UI looks unchanged after 'New plan' — consider a visible confirmation/diff or higher temperature.", "affected_selectors": ["[data-testid=\"regenerate-plan-button\"]"]}
+    ],
+    "design_issues": [
+      {"screen": "Escalation card", "issues": ["Trusted-contact/professional sub-line is rendered with title-case capitalization ('Friend · Reach Out To Them Directly If You Can'), which reads oddly for a sentence — use normal sentence case."]},
+      {"screen": "Wellness > Schedule (mobile 390px)", "issues": ["Time input + title input + add button on one row makes the title placeholder truncate ('Add something to y…'); consider stacking on small screens."]},
+      {"screen": "Wellness > Schedule", "issues": ["Uses native browser time picker (input type=time) rather than a styled component — acceptable, but visually inconsistent with the dark Obsidian theme."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration4_plus_payments.py",
+    "/app/test_reports/pytest/iter4_all.xml"
+  ],
+  "action_items": [
+    "Add auth + ownership check to GET /api/payments/status/{session_id}",
+    "Add error handling (try/catch + toast/retry) around loadPlusData and the wellness mutations in Wellness.js",
+    "Decide/document whether paying should consume the free trial (plus.trial_used=True in _grant_access)",
+    "Fix sentence-case for escalation card trusted-contact/professional sub-line",
+    "Consider splitting server.py (1046 lines) into routers: payments/plus/wellness vs chat/safety/admin"
+  ],
+  "critical_code_review_comments": [
+    "payments_status has no auth dependency yet mutates user entitlement via _grant_access — gate it to the owning user.",
+    "server.py is 1046 lines (>700 guideline); wellness + payments are self-contained and should move to their own routers.",
+    "Wellness.js shares a single `busy` flag across trial/checkout/regenerate/food, so unrelated buttons disable together during a slow LLM call.",
+    "Amounts are correctly taken server-side from PACKAGES (no client-supplied price) and metadata carries user_id/package_id — good Stripe hygiene; webhook + status both funnel through idempotent _grant_access (granted flag)."
+  ],
+  "updated_files": ["/app/backend/tests/test_iteration4_plus_payments.py"],
+  "success_rate": {"backend": "100% (75/75 tests, incl. 23 new iteration-4 tests)", "frontend": "100% of tested flows passed (no blocking UI bugs)"},
+  "seed_data_creation": "Registered throwaway users: qa1787634752@campionqa.com, qa1787634870b@campionqa.com, qa...m@campionqa.com (all password Test@12345; first + mobile one have an active 14-day trial). pytest also creates TEST_*@campionqa.com users, food logs and events (events/food cleaned up in-test).",
+  "should_call_test_agent_after_fix": false,
+  "should_main_agent_self_test": true,
+  "test_credentials": "admin@campionai.com / Admin@12345 (admin); test@campionai.com / Test@12345 (Plus active, trial used); new @campionqa.com registrations for fresh-trial tests",
+  "context_for_next_testing_agent": "Backend suite lives in /app/backend/tests/ (test_iteration4_plus_payments.py is the Plus/payments suite; run with `pytest tests/ -q`). SSE event type for chat deltas is 'delta' (not 'chunk'). Wellness paywall testids: plan-plus_monthly/plan-plus_yearly, subscribe-plus_{monthly,yearly}, start-trial-button, donate-donate_{5,15,30}. Trial is one-time per user, so always register a new @campionqa.com user for trial tests. Stripe hosted checkout completion is NOT automatable — only verify the checkout.stripe.com redirect and that /payments/status returns pending.",
+  "rca_of_the_issue": "No functional defects reproduced. Only real finding: /api/payments/status/{session_id} is unauthenticated while it can flip a payment_transactions row to paid and grant Plus via _grant_access; an attacker who learns/guesses a session id could poll (and, if that session was actually paid by someone else, cause the grant to be applied to the transaction owner — not privilege escalation for the attacker, but it removes access control from a billing endpoint)."
+}

@@ -8,10 +8,11 @@ import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
 import { toast } from "@/components/ui/sonner";
 import {
   HeartHandshake, ArrowLeft, Users, MessageSquare, Brain, ShieldAlert,
-  Cpu, Trash2, Plus, Search, Loader2, CheckCircle2,
+  Cpu, Trash2, Plus, Search, Loader2, CheckCircle2, Volume2, Mail, Smartphone,
 } from "lucide-react";
 
 const PROVIDERS = [
@@ -34,16 +35,28 @@ export default function Admin() {
   const [pros, setPros] = useState([]);
   const [events, setEvents] = useState([]);
   const [newPro, setNewPro] = useState({ name: "", credentials: "", specialty: "", contact: "", availability: "on-call" });
+  const [voice, setVoice] = useState({ enabled: true, voice_id: "", key_set: false });
+  const [fishKey, setFishKey] = useState("");
+  const [integrations, setIntegrations] = useState({});
 
   const loadAll = async () => {
-    const [s, r, pv, p, e] = await Promise.all([
+    const [s, r, pv, p, e, v, i] = await Promise.all([
       api.get("/admin/stats"), api.get("/admin/model-config"), api.get("/admin/provider-settings"),
       api.get("/admin/professionals"), api.get("/admin/safety-events"),
+      api.get("/admin/voice-settings"), api.get("/admin/integrations"),
     ]);
     setStats(s.data); setRoutes(r.data); setProvider(pv.data); setPros(p.data); setEvents(e.data);
+    setVoice(v.data); setIntegrations(i.data);
   };
 
   useEffect(() => { loadAll(); }, []);
+
+  const saveVoice = async () => {
+    await api.put("/admin/voice-settings", { enabled: voice.enabled, voice_id: voice.voice_id, fish_audio_api_key: fishKey || undefined });
+    toast.success("Voice settings saved");
+    setFishKey("");
+    loadAll();
+  };
 
   const saveRoute = async (tier, field, value) => {
     const updated = { ...routes[tier], [field]: value };
@@ -120,9 +133,9 @@ export default function Admin() {
       <div className="max-w-6xl mx-auto px-6 py-8">
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
           {statCards.map((c) => (
-            <div key={c.label} className="rounded-2xl border border-border/60 bg-card p-5" data-testid={`stat-${c.label}`}>
+            <div key={c.label} className="rounded-none border border-border bg-card p-5" data-testid={`stat-${c.label}`}>
               <c.icon className={`h-5 w-5 mb-3 ${c.alert ? "text-escalation" : "text-primary"}`} />
-              <p className="text-2xl font-extrabold font-display">{c.value}</p>
+              <p className="text-3xl font-mono-data">{c.value}</p>
               <p className="text-xs text-muted-foreground">{c.label}</p>
             </div>
           ))}
@@ -133,11 +146,12 @@ export default function Admin() {
             <TabsTrigger value="models" className="rounded-full" data-testid="admin-tab-models">Models & routing</TabsTrigger>
             <TabsTrigger value="professionals" className="rounded-full" data-testid="admin-tab-pros">Professionals</TabsTrigger>
             <TabsTrigger value="safety" className="rounded-full" data-testid="admin-tab-safety">Safety events</TabsTrigger>
+            <TabsTrigger value="voice" className="rounded-full" data-testid="admin-tab-voice">Voice & alerts</TabsTrigger>
           </TabsList>
 
           {/* MODELS */}
           <TabsContent value="models" className="mt-6 space-y-6">
-            <div className="rounded-2xl border border-border/60 bg-card p-6">
+            <div className="rounded-none border border-border bg-card p-6">
               <h3 className="font-display font-bold mb-1 flex items-center gap-2"><Cpu className="h-4 w-4 text-primary" /> Model routing</h3>
               <p className="text-sm text-muted-foreground mb-5">Route each task tier to a model. Safety uncertainty always escalates to the powerful tier.</p>
               <div className="space-y-4">
@@ -159,7 +173,7 @@ export default function Admin() {
               </div>
             </div>
 
-            <div className="rounded-2xl border border-border/60 bg-card p-6">
+            <div className="rounded-none border border-border bg-card p-6">
               <h3 className="font-display font-bold mb-1">OpenRouter</h3>
               <p className="text-sm text-muted-foreground mb-5">Use your own OpenRouter key to unlock hundreds of models. Set a tier's provider to "OpenRouter" and paste any model id above.</p>
               <div className="flex flex-col md:flex-row gap-3 mb-4">
@@ -187,7 +201,7 @@ export default function Admin() {
                   </div>
                   <div className="max-h-64 overflow-y-auto space-y-1.5">
                     {filteredModels.map((m) => (
-                      <div key={m.id} className="flex items-center justify-between rounded-xl border border-border/60 px-3 py-2" data-testid={`or-model-${m.id}`}>
+                      <div key={m.id} className="flex items-center justify-between rounded-xl border border-border px-3 py-2" data-testid={`or-model-${m.id}`}>
                         <div className="min-w-0"><p className="text-sm truncate">{m.name}</p><p className="text-xs text-muted-foreground truncate">{m.id}</p></div>
                         <Button size="sm" variant="ghost" className="rounded-full shrink-0" onClick={() => { navigator.clipboard?.writeText(m.id); toast.success(`Copied ${m.id}`); }}>Copy id</Button>
                       </div>
@@ -200,7 +214,7 @@ export default function Admin() {
 
           {/* PROFESSIONALS */}
           <TabsContent value="professionals" className="mt-6 space-y-5">
-            <div className="rounded-2xl border border-border/60 bg-card p-6">
+            <div className="rounded-none border border-border bg-card p-6">
               <h3 className="font-display font-bold mb-4 flex items-center gap-2"><Plus className="h-4 w-4 text-primary" /> Add verified professional</h3>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                 {[["name", "Full name"], ["credentials", "Credentials (e.g. PsyD)"], ["specialty", "Specialty"], ["contact", "Contact"]].map(([k, l]) => (
@@ -212,7 +226,7 @@ export default function Admin() {
             </div>
             <div className="space-y-2">
               {pros.map((p) => (
-                <div key={p.id} className="flex items-center justify-between rounded-2xl border border-border/60 bg-card p-4" data-testid={`pro-item-${p.id}`}>
+                <div key={p.id} className="flex items-center justify-between rounded-none border border-border bg-card p-4" data-testid={`pro-item-${p.id}`}>
                   <div className="flex items-center gap-3">
                     <CheckCircle2 className="h-5 w-5 text-primary" />
                     <div>
@@ -232,7 +246,7 @@ export default function Admin() {
           <TabsContent value="safety" className="mt-6 space-y-2">
             {events.length === 0 && <p className="text-sm text-muted-foreground py-10 text-center">No safety events yet.</p>}
             {events.map((e) => (
-              <div key={e.id} className="rounded-2xl border border-border/60 bg-card p-4" data-testid={`event-${e.id}`}>
+              <div key={e.id} className="rounded-none border border-border bg-card p-4" data-testid={`event-${e.id}`}>
                 <div className="flex items-center justify-between mb-2">
                   <div className="flex items-center gap-2">
                     <Badge className={`rounded-full ${e.risk_level === "high" ? "bg-escalation" : "bg-primary"}`}>{e.risk_level}</Badge>
@@ -245,9 +259,49 @@ export default function Admin() {
                 <div className="flex flex-wrap gap-1.5 mt-2">
                   {(e.actions_taken || []).map((a, i) => <Badge key={i} variant="secondary" className="rounded-full text-[10px]">{a}</Badge>)}
                 </div>
-                <p className="text-[11px] text-muted-foreground mt-2">{new Date(e.created_at).toLocaleString()}</p>
+                <p className="text-[11px] text-muted-foreground mt-2 font-mono-data">{new Date(e.created_at).toLocaleString()}</p>
               </div>
             ))}
+          </TabsContent>
+
+          {/* VOICE & ALERTS */}
+          <TabsContent value="voice" className="mt-6 space-y-6">
+            <div className="rounded-none border border-border bg-card p-6">
+              <h3 className="font-display font-bold mb-1 flex items-center gap-2"><ShieldAlert className="h-4 w-4 text-escalation" /> Alert delivery</h3>
+              <p className="text-sm text-muted-foreground mb-5">Real escalation alerts to trusted contacts & professionals. Add keys to backend .env to enable.</p>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-px bg-border">
+                {[
+                  { icon: Mail, label: "Email (Resend)", on: integrations.email_resend, key: "email" },
+                  { icon: Smartphone, label: "SMS (Twilio)", on: integrations.sms_twilio, key: "sms" },
+                  { icon: Volume2, label: "Voice (Fish Audio)", on: integrations.voice_fish, key: "voice" },
+                ].map((it) => (
+                  <div key={it.key} className="bg-card p-4 flex items-center gap-3" data-testid={`integration-${it.key}`}>
+                    <it.icon className="h-4 w-4 text-muted-foreground" />
+                    <div className="flex-1">
+                      <p className="text-sm">{it.label}</p>
+                      <p className={`text-[11px] font-mono-data ${it.on ? "text-emerald-400" : "text-muted-foreground"}`}>{it.on ? "CONFIGURED" : "not configured"}</p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="rounded-none border border-border bg-card p-6">
+              <h3 className="font-display font-bold mb-1 flex items-center gap-2"><Volume2 className="h-4 w-4 text-primary" /> Voice (Fish Audio)</h3>
+              <p className="text-sm text-muted-foreground mb-5">Bring your own Fish Audio key so CampionAI can speak. Speech-to-text runs in the browser, no key needed.</p>
+              <div className="flex items-center justify-between border border-border p-4 mb-4">
+                <div>
+                  <p className="text-sm font-medium">Enable voice replies</p>
+                  <p className="text-xs text-muted-foreground">Users get a speaker toggle in chat.</p>
+                </div>
+                <Switch data-testid="voice-enabled-toggle" checked={voice.enabled} onCheckedChange={(v) => setVoice((s) => ({ ...s, enabled: v }))} />
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <Input className="rounded-none h-10" type="password" placeholder={voice.key_set ? "•••• key saved — paste to replace" : "Fish Audio API key"} value={fishKey} onChange={(e) => setFishKey(e.target.value)} data-testid="fish-key-input" />
+                <Input className="rounded-none h-10" placeholder="Reference voice id (optional)" value={voice.voice_id || ""} onChange={(e) => setVoice((s) => ({ ...s, voice_id: e.target.value }))} data-testid="fish-voice-id-input" />
+              </div>
+              <Button className="rounded-none mt-4 bg-primary text-primary-foreground hover:bg-zinc-200" onClick={saveVoice} data-testid="save-voice-button">Save voice settings</Button>
+            </div>
           </TabsContent>
         </Tabs>
       </div>

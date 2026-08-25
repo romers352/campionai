@@ -1,0 +1,49 @@
+{
+  "summary": "Iteration 3 full regression + new-feature testing of CampionAI after the dark 'Obsidian & Platinum' redesign. Backend: 52 pytest tests (16 new in test_iteration3_voice_alerts.py + 36 existing) all pass against the public preview URL. Verified register->4-step onboarding->chat SSE streaming + memory extraction, existing user & admin login, high-risk escalation with graceful 'alert queued (delivery not configured)' actions, POST /api/safety/handoff logging, smarter GET /api/checkin (due=true, personalized, last_checkin persisted, off=not due), GET /api/voice/status {enabled:false}, POST /api/voice/tts 400 with helpful detail, GET /api/admin/integrations (all three false), GET/PUT /api/admin/voice-settings persistence + 403 for non-admins, admin model routing / professional add+delete / safety-event resolve. Frontend (desktop 1920 + mobile 390): landing, auth login, register->onboarding->/chat, streaming reply, escalation-card with hotlines + trusted contact + professional, handoff-dialog, mic-button present and enters 'Listening...' without crashing, voice-toggle-button correctly hidden (no Fish key), personalized check-in banner, admin 'Voice & alerts' tab with integration-email/sms/voice all 'not configured' and voice settings form persisting after reload, all 4 admin tabs render. No 500s, no blocked clicks, no console errors other than Radix a11y warnings.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "PUT /api/memories/{id}, PUT /api/admin/safety-events/{id}/resolve", "issue": "Carry-over from iteration 2: still returns 200 for unknown ids in the no-op path (memory PUT with empty body); low impact, not retested-failing this round (professionals DELETE now correctly 404s)."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "Chat escalation-card", "issue": "Copy reads 'Trusted contact alerted — Alex' even though no Resend/Twilio key is configured and the backend logs 'alert queued (delivery not configured)'. Misleading to a user in crisis; consider 'Trusted contact will be notified' or reflect delivery state returned by the API.", "selector": "[data-testid='escalation-card']", "priority": "MEDIUM"},
+      {"component": "Chat mobile sidebar / dialogs", "issue": "Console a11y errors: 'DialogContent requires a DialogTitle' (mobile sheet) and 'Missing Description or aria-describedby for DialogContent' (handoff dialog). Cosmetic/a11y only.", "selector": "[data-testid='mobile-menu-button'], [data-testid='handoff-dialog']", "priority": "LOW"}
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Chat composer", "issues": ["Mic icon and 'Message CampionAI' placeholder are very low-contrast dim grey on void black (likely below WCAG AA); mic affordance is easy to miss."]},
+      {"screen": "Chat header", "issues": ["'CAMPIONAI · AI' badge text is very dim against the header."]},
+      {"screen": "Admin dashboard", "issues": ["Stat grid shows only 4 of the 7 values returned by /api/admin/stats (sessions, memories detail, professionals missing) - informational."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration3_voice_alerts.py",
+    "/app/backend/tests/test_chat_safety.py",
+    "/app/test_reports/pytest/iteration3.xml",
+    "/app/test_reports/pytest/iteration3_all.xml"
+  ],
+  "action_items": [
+    "Optional: soften/qualify the 'Trusted contact alerted' escalation-card copy while delivery keys are unconfigured.",
+    "Optional: raise contrast of the mic icon + composer placeholder text in the dark theme.",
+    "Optional: add DialogTitle/aria-describedby to the mobile sheet and handoff dialog to clear Radix a11y console errors."
+  ],
+  "critical_code_review_comments": [
+    "server.py is 718 lines and mixes auth, chat, safety, voice and admin routers - consider splitting into routers/ modules before it grows further.",
+    "_voice_settings() defaults enabled=True but gates on bool(key), so /voice/status is correctly false without a key - good. Note that PUT /admin/voice-settings stores the raw Fish key in Mongo in plaintext; consider redacting/encrypting or keeping it env-only.",
+    "notifications.alert_contact uses asyncio.gather without return_exceptions=True; send_email/send_sms swallow their own exceptions today, but any future refactor that raises would break escalation. Add return_exceptions=True for safety.",
+    "escalation copy in the UI is derived from the presence of a trusted contact, not from the actual delivery result; consider returning the summarize() strings to the client so the UI can be honest about delivery state."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration3_voice_alerts.py (new)",
+    "/app/backend/tests/test_chat_safety.py (stale assertion on actions_taken wording updated to the new summarize() format)"
+  ],
+  "success_rate": {"backend": "100% (52/52)", "frontend": "100% of tested flows (1 medium copy issue, minor contrast/a11y nits)"},
+  "seed_data_creation": "Created throwaway users qa1787633209@campionqa.com, qa1787633271@campionqa.com and several TEST_*@campionai-qa.com pytest users; TEST_Dr QA professional created and deleted; admin voice-settings mutated during test then restored to {enabled:true, voice_id:''}.",
+  "should_call_test_agent_after_fix": false,
+  "should_main_agent_self_test": true,
+  "test_credentials": "admin@campionai.com / Admin@12345 and test@campionai.com / Test@12345 both work as documented in /app/memory/test_credentials.md",
+  "context_for_next_testing_agent": "Run `cd /app/backend && python -m pytest tests/ -q` - 52 tests, all green. Onboarding UI needs: step1 onb-name-input + onb-style-warm + onb-age-checkbox; step2 onb-country-select (Radix Select -> get_by_role('option', name='United States').click(force=True)) + onb-freq-daily; step3 onb-tc-* fields; step4 onb-consent-checkbox then onb-next-button (there is NO onb-finish-button). Continue is validation-gated so a missing country silently blocks step 2. Admin voice tab testids: admin-tab-voice, integration-email/sms/voice, voice-enabled-toggle, fish-key-input, fish-voice-id-input, save-voice-button. voice-toggle-button in chat is intentionally absent until a Fish key exists; mic-button always renders and shows 'Listening...' on click. Do not flag undelivered alerts / TTS 400 as bugs.",
+  "rca_of_the_issue": "Only failure encountered was tests/test_chat_safety.py::test_high_risk_escalation asserting the legacy action string 'Trusted contact alerted'; _trigger_escalation now composes actions via notifications.summarize(), which yields 'Trusted contact (Alex Friend): alert queued (delivery not configured)'. Test assertion updated (test-code only, no app change)."
+}

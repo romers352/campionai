@@ -7,6 +7,8 @@ import Auth from "@/pages/Auth";
 import Onboarding from "@/pages/Onboarding";
 import Chat from "@/pages/Chat";
 import Admin from "@/pages/Admin";
+import Wellness from "@/pages/Wellness";
+import { PaymentSuccess, PaymentCancel } from "@/pages/PaymentReturn";
 import { Loader2 } from "lucide-react";
 
 function FullLoader() {
@@ -36,6 +38,9 @@ export default function App() {
           <Route path="/auth" element={user ? <Navigate to={user.is_admin ? "/admin" : "/chat"} replace /> : <Auth />} />
           <Route path="/onboarding" element={<Onboarding />} />
           <Route path="/chat" element={<Protected><Chat /></Protected>} />
+          <Route path="/wellness" element={<Protected><Wellness /></Protected>} />
+          <Route path="/payment/success" element={<Protected><PaymentSuccess /></Protected>} />
+          <Route path="/payment/cancel" element={<Protected><PaymentCancel /></Protected>} />
           <Route path="/admin" element={<Protected adminOnly><Admin /></Protected>} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>

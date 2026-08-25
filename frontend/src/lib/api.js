@@ -21,6 +21,23 @@ api.interceptors.response.use(
   }
 );
 
+// Fetch TTS audio (Fish Audio via backend). Returns an object URL or throws.
+export async function ttsAudio(text) {
+  const token = localStorage.getItem("campion_token");
+  const res = await fetch(`${API}/voice/tts`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ text }),
+  });
+  if (!res.ok) {
+    let detail = "Voice unavailable";
+    try { detail = (await res.json()).detail || detail; } catch {}
+    throw new Error(detail);
+  }
+  const blob = await res.blob();
+  return URL.createObjectURL(blob);
+}
+
 // SSE streaming for chat
 export async function streamChat({ body, onMeta, onDelta, onDone, onError }) {
   const token = localStorage.getItem("campion_token");

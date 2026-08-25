@@ -1,11 +1,12 @@
 import os
 import json
+import base64
 import logging
 from pathlib import Path
 from datetime import datetime, timezone, timedelta
 
 from fastapi import FastAPI, APIRouter, Depends, HTTPException, Request
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, Response
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
@@ -16,7 +17,8 @@ load_dotenv(ROOT_DIR / ".env")
 from models import (
     RegisterInput, LoginInput, OnboardingInput, ProfileUpdate, ChatInput,
     SessionCreate, MemoryUpdate, ModelRouteConfig, ProfessionalInput,
-    ProviderSettings, PrivateModeInput, now_iso, new_id,
+    ProviderSettings, PrivateModeInput, VoiceSettingsInput, TTSInput,
+    CheckoutInput, FoodInput, EventInput, PlanItemToggle, now_iso, new_id,
 )
 from auth import (
     hash_password, verify_password, create_token,
@@ -26,6 +28,9 @@ from hotlines import get_hotlines, country_list, COUNTRY_NAMES
 from llm_router import ModelRouter, DEFAULT_ROUTES, list_openrouter_models
 from safety import classify_message
 from memory_engine import extract_memories, build_memory_context
+from notifications import alert_contact, summarize
+from voice import synthesize
+from emergentintegrations.payments.stripe.checkout import StripeCheckout, CheckoutSessionRequest
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 logger = logging.getLogger("campionai")
@@ -149,6 +154,7 @@ def _public_user(u):
         "onboarded": u.get("onboarded", False), "private_mode": u.get("private_mode", False),
         "profile": u.get("profile", {}), "trusted_contact": u.get("trusted_contact"),
         "country": u.get("country"), "checkin_frequency": u.get("checkin_frequency", "daily"),
+        "plus": _plus_state(u),
     }
 
 
@@ -287,6 +293,15 @@ async def chat_stream(inp: ChatInput, user=Depends(get_current_user)):
     memory_ctx = "" if private else await build_memory_context(db, user["id"])
     system = build_system_prompt(user, memory_ctx, transcript, risk)
 
+    if not private and _plus_state(user)["active"] and risk == "none":
+        coach = await _wellness_coach_context(user)
+        if coach:
+            system += (
+                "\n\nWELLNESS COACH: This person is on CampionAI Plus. Where it feels natural (not forced), "
+                "gently reference or encourage their plan below. Celebrate what they've done, softly nudge what's pending. "
+                "Never nag.\n" + coach
+            )
+
     escalation = None
     if risk == "high":
         escalation = await _trigger_escalation(user, session_id, inp.message)
@@ -325,15 +340,54 @@ def _sse(obj):
     return f"data: {json.dumps(obj)}\n\n"
 
 
+async def _wellness_coach_context(user) -> str:
+    today = datetime.now(timezone.utc).date().isoformat()
+    plan = await db.wellness_plans.find_one({"user_id": user["id"], "date": today}, {"_id": 0})
+    if not plan:
+        return ""
+    done = [i["title"] for i in plan["items"] if i.get("done")]
+    pending = [i["title"] for i in plan["items"] if not i.get("done")]
+    parts = []
+    if done:
+        parts.append("Done today: " + ", ".join(done))
+    if pending:
+        parts.append("Still pending: " + ", ".join(pending))
+    return "Today's wellness plan — " + "; ".join(parts) if parts else ""
+
+
 async def _trigger_escalation(user, session_id, trigger_text):
     tc = user.get("trusted_contact")
     hotlines = get_hotlines(user.get("country"))
     prof = await db.professionals.find_one({"verified": True}, {"_id": 0})
+    name = user.get("profile", {}).get("preferred_name") or "someone you care about"
     actions = ["Crisis hotlines surfaced"]
+    tc_notified = False
+    prof_notified = False
+
     if tc:
-        actions.append(f"Trusted contact alerted: {tc.get('name')}")
+        subject = f"CampionAI safety alert regarding {name}"
+        text = (
+            f"CampionAI safety alert: {name} may be going through a serious crisis right now and listed you as their "
+            f"trusted contact. Please reach out to them as soon as you can. If it's an emergency, call your local emergency number."
+        )
+        html = (
+            f"<div style='font-family:sans-serif;line-height:1.6'><h2 style='color:#E11D48'>CampionAI safety alert</h2>"
+            f"<p><b>{name}</b> may be going through a serious crisis and listed you as their trusted contact.</p>"
+            f"<p>Please reach out to them as soon as you can. If it's an emergency, call your local emergency number.</p>"
+            f"<p style='color:#888;font-size:12px'>You are receiving this because you were named as a trusted emergency contact in CampionAI.</p></div>"
+        )
+        results = await alert_contact(tc.get("name", ""), tc.get("email"), tc.get("phone"), subject, text, html)
+        tc_notified = any(r.get("sent") for r in results)
+        actions.append(summarize(results, f"Trusted contact ({tc.get('name')})"))
+
     if prof:
-        actions.append(f"Routed to verified professional: {prof.get('name')}")
+        subject = f"CampionAI handoff: a user may need support"
+        text = f"CampionAI detected a high-risk conversation for user {user['email']}. Please review for professional follow-up."
+        html = f"<div style='font-family:sans-serif'><h3>CampionAI professional handoff</h3><p>High-risk conversation detected for <b>{user['email']}</b>. Please review for follow-up.</p></div>"
+        presults = await alert_contact(prof.get("name", ""), prof.get("contact"), prof.get("phone"), subject, text, html)
+        prof_notified = any(r.get("sent") for r in presults)
+        actions.append(summarize(presults, f"Professional ({prof.get('name')})"))
+
     event = {
         "id": new_id(), "user_id": user["id"], "user_email": user["email"], "session_id": session_id,
         "risk_level": "high", "trigger_text": trigger_text[:500],
@@ -343,8 +397,10 @@ async def _trigger_escalation(user, session_id, trigger_text):
     return {
         "triggered": True,
         "trusted_contact": tc,
-        "hotlines": hotlines,
+        "trusted_contact_notified": tc_notified,
         "professional": prof,
+        "professional_notified": prof_notified,
+        "hotlines": hotlines,
         "message": "You matter, and you don't have to go through this alone. I've surfaced people who can help right now.",
     }
 
@@ -363,16 +419,40 @@ async def checkin(user=Depends(get_current_user)):
             return {"due": False}
     memory_ctx = await build_memory_context(db, user["id"])
     name = user.get("profile", {}).get("preferred_name") or "there"
+
+    # Pull recent moments from the last few conversations for a truly personal reference
+    recent_user_msgs = await db.messages.find(
+        {"user_id": user["id"], "role": "user", "private": {"$ne": True}}, {"_id": 0, "content": 1}
+    ).sort("created_at", -1).to_list(6)
+    recent_session = await db.sessions.find_one(
+        {"user_id": user["id"]}, {"_id": 0, "updated_at": 1}, sort=[("updated_at", -1)]
+    )
+    days_since = ""
+    if recent_session and recent_session.get("updated_at"):
+        try:
+            gap = datetime.now(timezone.utc) - datetime.fromisoformat(recent_session["updated_at"])
+            if gap.days >= 2:
+                days_since = f"It's been about {gap.days} days since you last talked. "
+        except Exception:
+            pass
+    recent_block = ""
+    if recent_user_msgs:
+        snippets = " | ".join(m["content"][:120] for m in reversed(recent_user_msgs))
+        recent_block = f"\nRecent things they mentioned: {snippets}"
+
     sys = (
-        "You are CampionAI starting a proactive, thoughtful check-in with your friend. "
-        "Write ONE short, warm, specific opening message (1-2 sentences) that references something you know about them if possible. "
-        "Sound like a caring friend reaching out, not a notification. No emojis."
+        "You are CampionAI reaching out first with a proactive, thoughtful check-in with your friend. "
+        "Write ONE short, warm, specific opening message (1-2 sentences). "
+        "If you can, gently reference a real recent moment or something you know about them so it feels personal, not generic. "
+        "Vary your opening — don't always start with 'Hey'. Sound like a caring friend, never a notification. Avoid emojis. "
+        f"{days_since}"
         + ("\n" + memory_ctx if memory_ctx else "")
+        + recent_block
     )
     try:
-        msg = await router_engine.complete(sys, f"Reach out to {name} now.", tier="medium", session_id=f"checkin-{user['id']}")
+        msg = await router_engine.complete(sys, f"Reach out to {name} now.", tier="medium", session_id=f"checkin-{user['id']}-{now_iso()}")
     except Exception:
-        msg = f"Hey {name}, you crossed my mind — how are you really doing today?"
+        msg = f"{name}, you crossed my mind today — how are you really doing?"
     await db.users.update_one({"id": user["id"]}, {"$set": {"last_checkin": now_iso()}})
     return {"due": True, "message": msg.strip()}
 
@@ -413,14 +493,55 @@ async def request_handoff(user=Depends(get_current_user)):
         "important_people": profile.get("important_people", []),
         "consented": True,
     }
+    actions = ["User-initiated handoff"]
+    if prof:
+        subject = "CampionAI: a user requested to talk with you"
+        text = f"{profile.get('preferred_name') or user['email']} requested a human handoff via CampionAI and consented to share a brief summary. Please follow up."
+        html = (
+            f"<div style='font-family:sans-serif;line-height:1.6'><h3>CampionAI handoff request</h3>"
+            f"<p><b>{profile.get('preferred_name') or user['email']}</b> requested to talk with a human and consented to share a summary.</p>"
+            f"<p><b>Style:</b> {profile.get('communication_style','—')}<br/><b>Goals:</b> {', '.join(profile.get('goals', [])) or '—'}</p></div>"
+        )
+        results = await alert_contact(prof.get("name", ""), prof.get("contact"), prof.get("phone"), subject, text, html)
+        actions.append(summarize(results, f"Professional ({prof.get('name')})"))
+    else:
+        actions.append("Matched: pending")
     event = {
         "id": new_id(), "user_id": user["id"], "user_email": user["email"], "session_id": None,
         "risk_level": "handoff_request", "trigger_text": "User requested human handoff",
-        "actions_taken": ["User-initiated handoff", f"Matched: {prof.get('name') if prof else 'pending'}"],
-        "resolved": False, "created_at": now_iso(),
+        "actions_taken": actions, "resolved": False, "created_at": now_iso(),
     }
     await db.safety_events.insert_one(dict(event))
     return {"professional": prof, "consented_summary": summary, "hotlines": get_hotlines(user.get("country"))}
+
+
+# ---------------- Voice (Fish Audio TTS + browser STT) ----------------
+async def _voice_settings():
+    doc = await db.voice_settings.find_one({"id": "global"}, {"_id": 0}) or {}
+    key = doc.get("fish_audio_api_key") or os.environ.get("FISH_AUDIO_API_KEY", "")
+    return {
+        "enabled": doc.get("enabled", True) and bool(key),
+        "voice_id": doc.get("voice_id") or os.environ.get("FISH_AUDIO_VOICE_ID", ""),
+        "key": key,
+    }
+
+
+@api.get("/voice/status")
+async def voice_status(user=Depends(get_current_user)):
+    s = await _voice_settings()
+    return {"enabled": s["enabled"]}
+
+
+@api.post("/voice/tts")
+async def voice_tts(inp: TTSInput, user=Depends(get_current_user)):
+    s = await _voice_settings()
+    if not s["enabled"] or not s["key"]:
+        raise HTTPException(status_code=400, detail="Voice is not configured. Add a Fish Audio key in Admin > Voice.")
+    try:
+        audio = await synthesize(inp.text, s["key"], s["voice_id"])
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Voice synthesis failed: {e}")
+    return Response(content=audio, media_type="audio/mpeg")
 
 
 @api.get("/safety/events")
@@ -551,6 +672,336 @@ async def resolve_safety_event(eid: str, admin=Depends(get_admin_user)):
     res = await db.safety_events.update_one({"id": eid}, {"$set": {"resolved": True, "resolved_at": now_iso()}})
     if res.matched_count == 0:
         raise HTTPException(status_code=404, detail="Safety event not found")
+    return {"ok": True}
+
+
+@api.get("/admin/voice-settings")
+async def get_voice_settings(admin=Depends(get_admin_user)):
+    doc = await db.voice_settings.find_one({"id": "global"}, {"_id": 0}) or {}
+    key = doc.get("fish_audio_api_key") or os.environ.get("FISH_AUDIO_API_KEY", "")
+    return {
+        "enabled": doc.get("enabled", True),
+        "voice_id": doc.get("voice_id") or os.environ.get("FISH_AUDIO_VOICE_ID", ""),
+        "key_set": bool(key),
+    }
+
+
+@api.put("/admin/voice-settings")
+async def set_voice_settings(inp: VoiceSettingsInput, admin=Depends(get_admin_user)):
+    setter = {"id": "global", "enabled": inp.enabled}
+    if inp.voice_id is not None:
+        setter["voice_id"] = inp.voice_id
+    if inp.fish_audio_api_key:
+        setter["fish_audio_api_key"] = inp.fish_audio_api_key
+    await db.voice_settings.update_one({"id": "global"}, {"$set": setter}, upsert=True)
+    return {"ok": True}
+
+
+@api.get("/admin/integrations")
+async def integrations_status(admin=Depends(get_admin_user)):
+    voice = await db.voice_settings.find_one({"id": "global"}, {"_id": 0}) or {}
+    fish_key = voice.get("fish_audio_api_key") or os.environ.get("FISH_AUDIO_API_KEY", "")
+    return {
+        "email_resend": bool(os.environ.get("RESEND_API_KEY", "").strip()),
+        "sms_twilio": bool(os.environ.get("TWILIO_ACCOUNT_SID", "").strip() and os.environ.get("TWILIO_AUTH_TOKEN", "").strip() and os.environ.get("TWILIO_FROM_NUMBER", "").strip()),
+        "voice_fish": bool(fish_key),
+    }
+
+
+# ---------------- Payments (Stripe Flow B) ----------------
+STRIPE_API_KEY = os.environ.get("STRIPE_API_KEY", "sk_test_emergent")
+
+PACKAGES = {
+    "plus_monthly": {"amount": 9.0, "type": "subscription", "period_days": 30, "label": "CampionAI Plus · Monthly"},
+    "plus_yearly": {"amount": 86.40, "type": "subscription", "period_days": 365, "label": "CampionAI Plus · Yearly"},
+    "donate_5": {"amount": 5.0, "type": "donation", "label": "Supporter"},
+    "donate_15": {"amount": 15.0, "type": "donation", "label": "Sustainer"},
+    "donate_30": {"amount": 30.0, "type": "donation", "label": "Champion"},
+}
+
+
+async def _grant_access(record):
+    """Idempotently grant Plus access / record donation once a transaction is paid."""
+    if record.get("granted"):
+        return
+    pkg = PACKAGES.get(record.get("package_id"))
+    if pkg and pkg["type"] == "subscription" and record.get("user_id"):
+        user = await db.users.find_one({"id": record["user_id"]})
+        plus = (user or {}).get("plus", {}) or {}
+        base = datetime.now(timezone.utc)
+        cur = plus.get("until")
+        if cur:
+            try:
+                cur_dt = datetime.fromisoformat(cur)
+                if cur_dt > base:
+                    base = cur_dt
+            except Exception:
+                pass
+        until = base + timedelta(days=pkg["period_days"])
+        await db.users.update_one({"id": record["user_id"]}, {"$set": {
+            "plus.status": "active", "plus.until": until.isoformat(),
+            "plus.last_payment": now_iso(), "plus.trial_used": True,
+        }})
+    await db.payment_transactions.update_one({"session_id": record["session_id"]}, {"$set": {"granted": True}})
+
+
+@api.post("/payments/checkout")
+async def payments_checkout(inp: CheckoutInput, request: Request, user=Depends(get_current_user)):
+    pkg = PACKAGES.get(inp.package_id)
+    if not pkg:
+        raise HTTPException(status_code=400, detail="Unknown package")
+    host = str(request.base_url)
+    webhook_url = f"{host}api/webhook/stripe"
+    checkout = StripeCheckout(api_key=STRIPE_API_KEY, webhook_url=webhook_url)
+    success_url = f"{inp.origin_url}/payment/success?session_id={{CHECKOUT_SESSION_ID}}"
+    cancel_url = f"{inp.origin_url}/payment/cancel"
+    req = CheckoutSessionRequest(
+        amount=float(pkg["amount"]), currency="usd",
+        success_url=success_url, cancel_url=cancel_url,
+        metadata={"user_id": user["id"], "package_id": inp.package_id, "type": pkg["type"]},
+    )
+    session = await checkout.create_checkout_session(req)
+    await db.payment_transactions.insert_one({
+        "session_id": session.session_id, "user_id": user["id"], "package_id": inp.package_id,
+        "amount": float(pkg["amount"]), "currency": "usd", "type": pkg["type"],
+        "status": "initiated", "payment_status": "pending", "granted": False,
+        "created_at": now_iso(), "updated_at": now_iso(),
+    })
+    return {"checkout_url": session.url, "session_id": session.session_id}
+
+
+@api.get("/payments/status/{session_id}")
+async def payments_status(session_id: str, request: Request, user=Depends(get_current_user)):
+    record = await db.payment_transactions.find_one({"session_id": session_id}, {"_id": 0})
+    if not record:
+        raise HTTPException(status_code=404, detail="Transaction not found")
+    if record.get("user_id") != user["id"]:
+        raise HTTPException(status_code=403, detail="Not your transaction")
+    if record.get("payment_status") != "paid":
+        try:
+            host = str(request.base_url)
+            checkout = StripeCheckout(api_key=STRIPE_API_KEY, webhook_url=f"{host}api/webhook/stripe")
+            status = await checkout.get_checkout_status(session_id)
+            if status.payment_status == "paid" or status.status == "complete":
+                await db.payment_transactions.update_one(
+                    {"session_id": session_id, "payment_status": {"$ne": "paid"}},
+                    {"$set": {"status": "completed", "payment_status": "paid", "updated_at": now_iso()}},
+                )
+                record = await db.payment_transactions.find_one({"session_id": session_id}, {"_id": 0})
+                await _grant_access(record)
+                record = await db.payment_transactions.find_one({"session_id": session_id}, {"_id": 0})
+        except Exception as e:
+            logger.error(f"stripe status error: {e}")
+    return {"session_id": record["session_id"], "status": record["status"], "payment_status": record["payment_status"], "type": record.get("type")}
+
+
+@api.post("/webhook/stripe")
+async def stripe_webhook(request: Request):
+    body = await request.body()
+    sig = request.headers.get("Stripe-Signature", "")
+    try:
+        host = str(request.base_url)
+        checkout = StripeCheckout(api_key=STRIPE_API_KEY, webhook_url=f"{host}api/webhook/stripe")
+        resp = await checkout.handle_webhook(body, sig)
+    except Exception as e:
+        logger.error(f"webhook error: {e}")
+        raise HTTPException(status_code=400, detail="Invalid webhook")
+    if resp.payment_status == "paid":
+        await db.payment_transactions.update_one(
+            {"session_id": resp.session_id, "payment_status": {"$ne": "paid"}},
+            {"$set": {"status": "completed", "payment_status": "paid", "updated_at": now_iso()}},
+        )
+        record = await db.payment_transactions.find_one({"session_id": resp.session_id}, {"_id": 0})
+        if record:
+            await _grant_access(record)
+    return {"status": "ok"}
+
+
+# ---------------- Plus (subscription + 14-day trial) ----------------
+def _plus_state(user):
+    plus = user.get("plus", {}) or {}
+    now = datetime.now(timezone.utc)
+    active, status = False, plus.get("status", "none")
+    until = plus.get("until")
+    trial_ends = plus.get("trial_ends_at")
+    if until:
+        try:
+            if datetime.fromisoformat(until) > now:
+                active, status = True, "active"
+        except Exception:
+            pass
+    if not active and trial_ends:
+        try:
+            if datetime.fromisoformat(trial_ends) > now:
+                active, status = True, "trialing"
+        except Exception:
+            pass
+    return {"active": active, "status": status, "until": until, "trial_ends_at": trial_ends, "trial_used": plus.get("trial_used", False)}
+
+
+@api.get("/plus/status")
+async def plus_status(user=Depends(get_current_user)):
+    return _plus_state(user)
+
+
+@api.post("/plus/start-trial")
+async def start_trial(user=Depends(get_current_user)):
+    plus = user.get("plus", {}) or {}
+    if plus.get("trial_used") or plus.get("until"):
+        raise HTTPException(status_code=400, detail="Trial already used")
+    trial_ends = (datetime.now(timezone.utc) + timedelta(days=14)).isoformat()
+    await db.users.update_one({"id": user["id"]}, {"$set": {
+        "plus.status": "trialing", "plus.trial_ends_at": trial_ends, "plus.trial_used": True,
+    }})
+    fresh = await db.users.find_one({"id": user["id"]})
+    return _plus_state(fresh)
+
+
+async def require_plus(user=Depends(get_current_user)):
+    if not _plus_state(user)["active"]:
+        raise HTTPException(status_code=402, detail="CampionAI Plus required")
+    return user
+
+
+# ---------------- Wellness ----------------
+PLAN_SYSTEM = """You are CampionAI creating a personalized daily wellness plan for your friend.
+Return ONLY a JSON array of 4-6 items. Each item:
+{"type": "meditation|yoga|breathing|movement|task", "title": "<short>", "detail": "<one gentle sentence>", "duration_min": <int>, "time_of_day": "morning|afternoon|evening"}
+Base it on their goals/profile if given. Mix calming practices (meditation/yoga/breathing) with 1-2 real-life behavioral tasks (e.g. a short walk, message a friend). Keep it doable and kind. JSON array only."""
+
+
+async def _generate_plan(user, date_str):
+    profile = user.get("profile", {})
+    ctx = f"Name: {profile.get('preferred_name')}. Goals: {', '.join(profile.get('goals', [])) or 'general wellbeing'}. Likes: {', '.join(profile.get('likes', [])) or '—'}."
+    try:
+        raw = await router_engine.complete(PLAN_SYSTEM, ctx, tier="medium", session_id=f"plan-{user['id']}-{date_str}")
+    except Exception:
+        raw = "[]"
+    raw = (raw or "").strip()
+    if raw.startswith("```"):
+        raw = raw.strip("`")
+        raw = raw.split("\n", 1)[1] if "\n" in raw else raw
+    s, e = raw.find("["), raw.rfind("]")
+    items = []
+    if s != -1 and e != -1:
+        try:
+            items = json.loads(raw[s:e + 1])
+        except Exception:
+            items = []
+    if not items:
+        items = [
+            {"type": "breathing", "title": "Morning reset", "detail": "Three minutes of slow box breathing to start gently.", "duration_min": 3, "time_of_day": "morning"},
+            {"type": "movement", "title": "Short walk", "detail": "A 15-minute walk, phone in your pocket.", "duration_min": 15, "time_of_day": "afternoon"},
+            {"type": "meditation", "title": "Evening wind-down", "detail": "A 10-minute body scan before bed.", "duration_min": 10, "time_of_day": "evening"},
+            {"type": "task", "title": "Reach out", "detail": "Send one message to someone you care about.", "duration_min": 5, "time_of_day": "afternoon"},
+        ]
+    for it in items:
+        it["done"] = False
+    doc = {"id": new_id(), "user_id": user["id"], "date": date_str, "items": items, "generated_at": now_iso()}
+    return doc
+
+
+@api.get("/wellness/plan")
+async def get_plan(user=Depends(require_plus)):
+    today = datetime.now(timezone.utc).date().isoformat()
+    plan = await db.wellness_plans.find_one({"user_id": user["id"], "date": today}, {"_id": 0})
+    if not plan:
+        plan = await _generate_plan(user, today)
+        await db.wellness_plans.insert_one(dict(plan))
+        plan.pop("_id", None)
+    return plan
+
+
+@api.post("/wellness/plan/regenerate")
+async def regenerate_plan(user=Depends(require_plus)):
+    today = datetime.now(timezone.utc).date().isoformat()
+    plan = await _generate_plan(user, today)
+    await db.wellness_plans.update_one({"user_id": user["id"], "date": today}, {"$set": dict(plan)}, upsert=True)
+    return plan
+
+
+@api.put("/wellness/plan/toggle")
+async def toggle_plan_item(inp: PlanItemToggle, user=Depends(require_plus)):
+    today = datetime.now(timezone.utc).date().isoformat()
+    plan = await db.wellness_plans.find_one({"user_id": user["id"], "date": today})
+    if not plan or inp.item_index >= len(plan["items"]):
+        raise HTTPException(status_code=404, detail="Item not found")
+    plan["items"][inp.item_index]["done"] = not plan["items"][inp.item_index].get("done", False)
+    await db.wellness_plans.update_one({"id": plan["id"]}, {"$set": {"items": plan["items"]}})
+    return {"ok": True, "items": plan["items"]}
+
+
+FOOD_SYSTEM = """You estimate nutrition from a casual meal description. Return ONLY JSON:
+{"calories": <int>, "protein_g": <int>, "carbs_g": <int>, "fat_g": <int>, "summary": "<short readable name>"}
+Estimate reasonably for typical portions. JSON only."""
+
+
+@api.post("/wellness/food")
+async def log_food(inp: FoodInput, user=Depends(require_plus)):
+    date_str = inp.date or datetime.now(timezone.utc).date().isoformat()
+    try:
+        raw = await router_engine.complete(FOOD_SYSTEM, inp.text, tier="cheap", session_id=f"food-{user['id']}")
+    except Exception:
+        raw = "{}"
+    raw = (raw or "").strip()
+    if raw.startswith("```"):
+        raw = raw.strip("`")
+        raw = raw.split("\n", 1)[1] if "\n" in raw else raw
+    s, e = raw.find("{"), raw.rfind("}")
+    est = {}
+    if s != -1 and e != -1:
+        try:
+            est = json.loads(raw[s:e + 1])
+        except Exception:
+            est = {}
+    doc = {
+        "id": new_id(), "user_id": user["id"], "date": date_str, "text": inp.text,
+        "calories": int(est.get("calories", 0) or 0), "protein_g": int(est.get("protein_g", 0) or 0),
+        "carbs_g": int(est.get("carbs_g", 0) or 0), "fat_g": int(est.get("fat_g", 0) or 0),
+        "summary": est.get("summary", inp.text[:40]), "created_at": now_iso(),
+    }
+    await db.food_logs.insert_one(dict(doc))
+    doc.pop("_id", None)
+    return doc
+
+
+@api.get("/wellness/food")
+async def get_food(date: str = None, user=Depends(require_plus)):
+    date_str = date or datetime.now(timezone.utc).date().isoformat()
+    logs = await db.food_logs.find({"user_id": user["id"], "date": date_str}, {"_id": 0}).sort("created_at", 1).to_list(200)
+    totals = {"calories": 0, "protein_g": 0, "carbs_g": 0, "fat_g": 0}
+    for l in logs:
+        for k in totals:
+            totals[k] += l.get(k, 0)
+    return {"date": date_str, "logs": logs, "totals": totals}
+
+
+@api.delete("/wellness/food/{fid}")
+async def delete_food(fid: str, user=Depends(require_plus)):
+    await db.food_logs.delete_one({"id": fid, "user_id": user["id"]})
+    return {"ok": True}
+
+
+@api.get("/wellness/events")
+async def get_events(date: str = None, user=Depends(require_plus)):
+    q = {"user_id": user["id"]}
+    if date:
+        q["date"] = date
+    return await db.wellness_events.find(q, {"_id": 0}).sort("start", 1).to_list(500)
+
+
+@api.post("/wellness/events")
+async def add_event(inp: EventInput, user=Depends(require_plus)):
+    date_str = inp.start[:10] if len(inp.start) >= 10 else datetime.now(timezone.utc).date().isoformat()
+    doc = {"id": new_id(), "user_id": user["id"], "date": date_str, **inp.model_dump(), "created_at": now_iso()}
+    await db.wellness_events.insert_one(dict(doc))
+    doc.pop("_id", None)
+    return doc
+
+
+@api.delete("/wellness/events/{eid}")
+async def delete_event(eid: str, user=Depends(require_plus)):
+    await db.wellness_events.delete_one({"id": eid, "user_id": user["id"]})
     return {"ok": True}
 
 
