@@ -110,8 +110,15 @@ def check_access_rules():
             self._count = count
 
         async def count_documents(self, q):
-            # The cap must not count crisis sessions — assert the query says so.
+            # Assert the QUERY SHAPE, not just the count. A live run caught the cap
+            # silently never firing because "requested" was missing here — an instant
+            # session is created in that status, so it counted zero sessions forever.
             assert q.get("kind") == {"$ne": "crisis"}, "cap query must exclude crisis sessions"
+            counted = set(q.get("status", {}).get("$in", ()))
+            for required in ("requested", "pending_payment", "scheduled", "accepted", "live", "completed"):
+                assert required in counted, f"cap query must count '{required}' sessions"
+            for excluded in ("cancelled", "expired", "no_show"):
+                assert excluded not in counted, f"cap query must not count '{excluded}' sessions"
             return self._count
 
     class FakeDB:

@@ -24,6 +24,13 @@ SESSION_SLOT_MIN = 30        # scheduled sessions occupy a 30-minute slot
 LIVE_STATUSES = ("requested", "pending_payment", "scheduled", "accepted", "live")
 BOOKED_STATUSES = ("scheduled", "accepted", "live")
 
+# Statuses that consume a free-tier allowance. Must include "requested" and
+# "pending_payment": an instant session is created as "requested", so leaving those
+# out meant instant sessions never counted and the monthly cap never fired.
+# cancelled/expired/no_show are excluded — a request no doctor answered must not
+# burn the user's allowance.
+COUNTED_STATUSES = ("requested", "pending_payment", "scheduled", "accepted", "live", "completed")
+
 
 def _month_key(dt=None):
     dt = dt or datetime.now(timezone.utc)
@@ -47,7 +54,7 @@ async def free_sessions_used(db, user_id: str) -> int:
         "user_id": user_id,
         "kind": {"$ne": "crisis"},
         "price": 0,
-        "status": {"$in": BOOKED_STATUSES + ("completed",)},
+        "status": {"$in": COUNTED_STATUSES},
         "month": _month_key(),
     })
 
