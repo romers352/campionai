@@ -725,7 +725,8 @@ async def _grant_access(record):
     if record.get("granted"):
         return
     pkg = PACKAGES.get(record.get("package_id"))
-    if pkg and pkg["type"] == "subscription" and record.get("user_id"):
+    is_sub = (pkg and pkg["type"] == "subscription")
+    if is_sub and record.get("user_id"):
         user = await db.users.find_one({"id": record["user_id"]})
         plus = (user or {}).get("plus", {}) or {}
         base = datetime.now(timezone.utc)
@@ -737,37 +738,66 @@ async def _grant_access(record):
                     base = cur_dt
             except Exception:
                 pass
-        until = base + timedelta(days=pkg["period_days"])
+        period = pkg["period_days"]
+        until = base + timedelta(days=period)
         await db.users.update_one({"id": record["user_id"]}, {"$set": {
             "plus.status": "active", "plus.until": until.isoformat(),
             "plus.last_payment": now_iso(), "plus.trial_used": True,
         }})
+    elif record.get("type") == "donation" and not record.get("anonymous") and record.get("user_id"):
+        amount = float(record.get("amount", 0) or 0)
+        name = record.get("donor_name") or "A supporter"
+        avatar = f"https://ui-avatars.com/api/?name={name.replace(' ', '+')}&background=1a1a1c&color=fafafa&bold=true"
+        await db.donors.update_one(
+            {"user_id": record["user_id"]},
+            {"$inc": {"total": amount}, "$set": {"name": name, "avatar": avatar, "last_at": now_iso()}},
+            upsert=True,
+        )
     await db.payment_transactions.update_one({"session_id": record["session_id"]}, {"$set": {"granted": True}})
 
 
 @api.post("/payments/checkout")
 async def payments_checkout(inp: CheckoutInput, request: Request, user=Depends(get_current_user)):
     pkg = PACKAGES.get(inp.package_id)
-    if not pkg:
+    is_custom = inp.package_id == "donate_custom"
+    if not pkg and not is_custom:
         raise HTTPException(status_code=400, detail="Unknown package")
+    if is_custom:
+        amount = round(float(inp.amount or 0), 2)
+        if amount < 1:
+            raise HTTPException(status_code=400, detail="Minimum donation is $1")
+        if amount > 10000:
+            raise HTTPException(status_code=400, detail="Maximum donation is $10,000")
+        ptype = "donation"
+    else:
+        amount = float(pkg["amount"])
+        ptype = pkg["type"]
     host = str(request.base_url)
     webhook_url = f"{host}api/webhook/stripe"
     checkout = StripeCheckout(api_key=STRIPE_API_KEY, webhook_url=webhook_url)
     success_url = f"{inp.origin_url}/payment/success?session_id={{CHECKOUT_SESSION_ID}}"
     cancel_url = f"{inp.origin_url}/payment/cancel"
+    donor_name = (user.get("profile", {}) or {}).get("preferred_name") or user["email"].split("@")[0]
     req = CheckoutSessionRequest(
-        amount=float(pkg["amount"]), currency="usd",
+        amount=amount, currency="usd",
         success_url=success_url, cancel_url=cancel_url,
-        metadata={"user_id": user["id"], "package_id": inp.package_id, "type": pkg["type"]},
+        metadata={"user_id": user["id"], "package_id": inp.package_id, "type": ptype},
     )
     session = await checkout.create_checkout_session(req)
     await db.payment_transactions.insert_one({
         "session_id": session.session_id, "user_id": user["id"], "package_id": inp.package_id,
-        "amount": float(pkg["amount"]), "currency": "usd", "type": pkg["type"],
+        "amount": amount, "currency": "usd", "type": ptype,
+        "anonymous": bool(inp.anonymous), "donor_name": donor_name,
         "status": "initiated", "payment_status": "pending", "granted": False,
         "created_at": now_iso(), "updated_at": now_iso(),
     })
     return {"checkout_url": session.url, "session_id": session.session_id}
+
+
+@api.get("/donors/top")
+async def top_donors():
+    donors = await db.donors.find({}, {"_id": 0}).sort("total", -1).to_list(10)
+    return [{"name": d.get("name"), "avatar": d.get("avatar"), "total": round(d.get("total", 0), 2)} for d in donors]
 
 
 @api.get("/payments/status/{session_id}")

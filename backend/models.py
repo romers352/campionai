@@ -122,6 +122,8 @@ class TTSInput(BaseModel):
 class CheckoutInput(BaseModel):
     package_id: str
     origin_url: str
+    amount: Optional[float] = None
+    anonymous: bool = False
 
 
 class FoodInput(BaseModel):

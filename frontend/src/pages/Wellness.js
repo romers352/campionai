@@ -6,6 +6,7 @@ import { useAuth } from "@/context/AuthContext";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import { Checkbox } from "@/components/ui/checkbox";
 import { toast } from "@/components/ui/sonner";
 import {
   ArrowLeft, Sparkles, Check, RefreshCw, Utensils, CalendarClock, Plus, Trash2,
@@ -36,6 +37,15 @@ const PLAN_PERKS = [
 ];
 
 function Paywall({ status, onTrial, onCheckout, onDonate, busy }) {
+  const [donors, setDonors] = useState([]);
+  const [custom, setCustom] = useState("");
+  const [anon, setAnon] = useState(false);
+  useEffect(() => { api.get("/donors/top").then(({ data }) => setDonors(data)).catch(() => {}); }, []);
+  const donateCustom = () => {
+    const amt = parseFloat(custom);
+    if (!amt || amt < 1) { toast.error("Enter an amount of at least $1"); return; }
+    onCheckout("donate_custom", { amount: amt, anonymous: anon });
+  };
   const plans = [
     { id: "plus_monthly", price: "$9", per: "/mo", note: "Billed monthly" },
     { id: "plus_yearly", price: "$86.40", per: "/yr", note: "Just $7.20/mo · billed yearly", featured: true, save: "Save 20%" },
@@ -114,15 +124,47 @@ function Paywall({ status, onTrial, onCheckout, onDonate, busy }) {
           <p className="text-[10px] tracking-[0.3em] uppercase text-muted-foreground mb-3 flex items-center gap-2"><Heart className="h-3.5 w-3.5" /> Keep CampionAI free for everyone</p>
           <p className="text-muted-foreground mb-6 max-w-lg leading-relaxed">
             CampionAI is free for individuals — and always will be. If Plus isn't for you but you'd like to help,
-            a small donation keeps the lights on for people who need it.
+            any amount keeps the lights on for people who need it.
           </p>
-          <div className="flex flex-wrap gap-3">
+
+          <div className="flex flex-wrap gap-2 mb-4">
             {[["donate_5", "$5"], ["donate_15", "$15"], ["donate_30", "$30"]].map(([id, label]) => (
-              <Button key={id} variant="outline" className="rounded-full border-border hover:border-foreground/40 hover:bg-accent px-6" onClick={() => onDonate(id)} disabled={busy} data-testid={`donate-${id}`}>
-                <Heart className="h-3.5 w-3.5 mr-2 text-foreground/60" strokeWidth={1.5} /> Donate {label}
+              <Button key={id} variant="outline" className="rounded-full border-border hover:border-foreground/40 hover:bg-accent px-5" onClick={() => onDonate(id)} disabled={busy} data-testid={`donate-${id}`}>
+                {label}
               </Button>
             ))}
           </div>
+
+          <div className="flex gap-2 max-w-sm mb-3">
+            <div className="relative flex-1">
+              <span className="absolute left-4 top-1/2 -translate-y-1/2 text-muted-foreground">$</span>
+              <Input type="number" min="1" step="1" className="rounded-full h-11 pl-7" placeholder="Custom amount" value={custom}
+                onChange={(e) => setCustom(e.target.value)} onKeyDown={(e) => e.key === "Enter" && donateCustom()} data-testid="custom-donate-input" />
+            </div>
+            <Button className="rounded-full bg-primary text-primary-foreground hover:bg-zinc-200 px-6" onClick={donateCustom} disabled={busy} data-testid="custom-donate-button">
+              {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : "Donate"}
+            </Button>
+          </div>
+          <label className="flex items-center gap-2 text-sm text-muted-foreground cursor-pointer mb-12">
+            <Checkbox checked={anon} onCheckedChange={(v) => setAnon(!!v)} data-testid="donate-anonymous-checkbox" />
+            Donate anonymously (won't appear on the supporters list)
+          </label>
+
+          {donors.length > 0 && (
+            <div>
+              <p className="text-[10px] tracking-[0.3em] uppercase text-muted-foreground mb-5">Top supporters</p>
+              <div className="space-y-px bg-border border border-border rounded-2xl overflow-hidden" data-testid="top-donors">
+                {donors.map((d, i) => (
+                  <div key={i} className="bg-card/60 flex items-center gap-4 p-4" data-testid={`donor-${i}`}>
+                    <span className="font-mono-data text-sm text-muted-foreground w-5 shrink-0">{i + 1}</span>
+                    <img src={d.avatar} alt="" className="h-9 w-9 rounded-full border border-border shrink-0" />
+                    <p className="flex-1 text-sm font-medium truncate">{d.name}</p>
+                    <span className="font-display font-light text-lg shrink-0">${d.total}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       </motion.div>
     </div>
@@ -207,12 +249,12 @@ export default function Wellness() {
     } catch (e) { toast.error(e?.response?.data?.detail || "Could not start trial"); }
     finally { setBusy(false); }
   };
-  const checkout = async (package_id) => {
+  const checkout = async (package_id, extra = {}) => {
     setBusy(true);
     try {
-      const { data } = await api.post("/payments/checkout", { package_id, origin_url: window.location.origin });
+      const { data } = await api.post("/payments/checkout", { package_id, origin_url: window.location.origin, ...extra });
       window.location.href = data.checkout_url;
-    } catch { toast.error("Could not start checkout"); setBusy(false); }
+    } catch (e) { toast.error(e?.response?.data?.detail || "Could not start checkout"); setBusy(false); }
   };
   const toggleItem = async (idx) => {
     const { data } = await api.put("/wellness/plan/toggle", { item_index: idx });
