@@ -21,7 +21,8 @@ from models import (
     RegisterInput, LoginInput, OnboardingInput, ProfileUpdate, ChatInput,
     SessionCreate, MemoryUpdate, ModelRouteConfig,
     ProviderSettings, PrivateModeInput, VoiceSettingsInput, TTSInput,
-    FoodInput, EventInput, PlanItemToggle, PaypalActivate, DonationOrder,
+    FoodInput, FoodEdit, EventInput, PlanItemToggle, PlanItemAdd, PlanReorder,
+    ChatFeedback, PaypalActivate, DonationOrder,
     GoogleSessionInput, ContactInput, now_iso, new_id,
 )
 from auth import (
@@ -1373,6 +1374,89 @@ async def toggle_plan_item(inp: PlanItemToggle, user=Depends(require_plus)):
     return {"ok": True, "items": plan["items"]}
 
 
+@api.post("/wellness/plan/item")
+async def add_plan_item(inp: PlanItemAdd, user=Depends(require_plus)):
+    """Let a user hand-add their own to-do to today's plan (not just AI-generated)."""
+    today = datetime.now(timezone.utc).date().isoformat()
+    plan = await db.wellness_plans.find_one({"user_id": user["id"], "date": today})
+    if not plan:
+        plan = await _generate_plan(user, today)
+        await db.wellness_plans.insert_one(dict(plan))
+    item = {
+        "type": inp.type or "task", "title": inp.title, "detail": inp.detail or "",
+        "duration_min": int(inp.duration_min or 10), "time_of_day": inp.time_of_day or "morning",
+        "done": False, "custom": True,
+    }
+    items = plan["items"] + [item]
+    await db.wellness_plans.update_one({"id": plan["id"]}, {"$set": {"items": items}})
+    return {"ok": True, "items": items}
+
+
+@api.delete("/wellness/plan/item/{index}")
+async def delete_plan_item(index: int, user=Depends(require_plus)):
+    today = datetime.now(timezone.utc).date().isoformat()
+    plan = await db.wellness_plans.find_one({"user_id": user["id"], "date": today})
+    if not plan or index < 0 or index >= len(plan["items"]):
+        raise HTTPException(status_code=404, detail="Item not found")
+    items = [it for i, it in enumerate(plan["items"]) if i != index]
+    await db.wellness_plans.update_one({"id": plan["id"]}, {"$set": {"items": items}})
+    return {"ok": True, "items": items}
+
+
+@api.put("/wellness/plan/reorder")
+async def reorder_plan_items(inp: PlanReorder, user=Depends(require_plus)):
+    today = datetime.now(timezone.utc).date().isoformat()
+    plan = await db.wellness_plans.find_one({"user_id": user["id"], "date": today})
+    if not plan:
+        raise HTTPException(status_code=404, detail="No plan yet")
+    n = len(plan["items"])
+    if sorted(inp.order) != list(range(n)):
+        raise HTTPException(status_code=400, detail="Invalid order")
+    items = [plan["items"][i] for i in inp.order]
+    await db.wellness_plans.update_one({"id": plan["id"]}, {"$set": {"items": items}})
+    return {"ok": True, "items": items}
+
+
+@api.get("/wellness/streak")
+async def wellness_streak(user=Depends(require_plus)):
+    """Consecutive days (ending today or yesterday) where every plan item was done."""
+    plans = await db.wellness_plans.find(
+        {"user_id": user["id"]}, {"_id": 0, "date": 1, "items": 1}
+    ).sort("date", -1).to_list(400)
+    done_by_date = {}
+    for p in plans:
+        items = p.get("items") or []
+        done_by_date[p["date"]] = bool(items) and all(i.get("done") for i in items)
+    today = datetime.now(timezone.utc).date()
+    # Allow the streak to "hold" if today isn't complete yet — start from today,
+    # but if today isn't done, don't break it (count from yesterday).
+    current = 0
+    d = today
+    if not done_by_date.get(d.isoformat()):
+        d = today - timedelta(days=1)
+    while done_by_date.get(d.isoformat()):
+        current += 1
+        d = d - timedelta(days=1)
+    # Best streak across history
+    best = 0
+    run = 0
+    all_days = sorted(done_by_date.keys())
+    prev = None
+    for ds in all_days:
+        cur = datetime.fromisoformat(ds).date()
+        if done_by_date[ds]:
+            if prev is not None and (cur - prev).days == 1:
+                run += 1
+            else:
+                run = 1
+            best = max(best, run)
+            prev = cur
+        else:
+            prev = None
+            run = 0
+    return {"current": current, "best": best, "today_complete": done_by_date.get(today.isoformat(), False)}
+
+
 FOOD_SYSTEM = """You estimate nutrition from a casual meal description. Return ONLY JSON:
 {"calories": <int>, "protein_g": <int>, "carbs_g": <int>, "fat_g": <int>, "summary": "<short readable name>"}
 Estimate reasonably for typical portions. JSON only."""
@@ -1400,10 +1484,22 @@ async def log_food(inp: FoodInput, user=Depends(require_plus)):
         "id": new_id(), "user_id": user["id"], "date": date_str, "text": inp.text,
         "calories": int(est.get("calories", 0) or 0), "protein_g": int(est.get("protein_g", 0) or 0),
         "carbs_g": int(est.get("carbs_g", 0) or 0), "fat_g": int(est.get("fat_g", 0) or 0),
-        "summary": est.get("summary", inp.text[:40]), "created_at": now_iso(),
+        "summary": est.get("summary", inp.text[:40]), "meal": inp.meal or "snack", "created_at": now_iso(),
     }
     await db.food_logs.insert_one(dict(doc))
     doc.pop("_id", None)
+    return doc
+
+
+@api.put("/wellness/food/{fid}")
+async def edit_food(fid: str, inp: FoodEdit, user=Depends(require_plus)):
+    updates = {k: v for k, v in inp.model_dump().items() if v is not None}
+    if not updates:
+        raise HTTPException(status_code=400, detail="Nothing to update")
+    res = await db.food_logs.update_one({"id": fid, "user_id": user["id"]}, {"$set": updates})
+    if res.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Log not found")
+    doc = await db.food_logs.find_one({"id": fid, "user_id": user["id"]}, {"_id": 0})
     return doc
 
 
@@ -1444,6 +1540,16 @@ async def add_event(inp: EventInput, user=Depends(require_plus)):
 @api.delete("/wellness/events/{eid}")
 async def delete_event(eid: str, user=Depends(require_plus)):
     await db.wellness_events.delete_one({"id": eid, "user_id": user["id"]})
+    return {"ok": True}
+
+
+@api.post("/chat/feedback")
+async def chat_feedback(inp: ChatFeedback, user=Depends(get_current_user)):
+    """Lightweight thumbs up/down on an assistant reply — stored for later review."""
+    await db.message_feedback.insert_one({
+        "id": new_id(), "user_id": user["id"], "session_id": inp.session_id,
+        "content": (inp.content or "")[:2000], "rating": inp.rating, "created_at": now_iso(),
+    })
     return {"ok": True}
 
 

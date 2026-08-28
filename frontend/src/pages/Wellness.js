@@ -14,7 +14,10 @@ import AccountMenu from "@/components/AccountMenu";
 import {
   ArrowLeft, Sparkles, Check, RefreshCw, Utensils, CalendarClock, Plus, Trash2,
   Wind, Flower2, Activity, Brain, HeartHandshake, Loader2, Heart,
+  Flame, ChevronUp, ChevronDown, PartyPopper,
 } from "lucide-react";
+
+const MEALS = ["breakfast", "lunch", "dinner", "snack"];
 
 const TYPE_ICON = { breathing: Wind, yoga: Flower2, movement: Activity, meditation: Brain, task: HeartHandshake };
 const MACRO_TARGETS = { protein_g: 120, carbs_g: 250, fat_g: 70 };
@@ -259,12 +262,18 @@ export default function Wellness() {
   const [events, setEvents] = useState([]);
   const [evtTitle, setEvtTitle] = useState("");
   const [evtTime, setEvtTime] = useState("09:00");
+  const [streak, setStreak] = useState({ current: 0, best: 0 });
+  const [newTodo, setNewTodo] = useState("");
+  const [meal, setMeal] = useState("breakfast");
 
   const name = user?.profile?.preferred_name || "friend";
 
   const loadStatus = async () => {
     const { data } = await api.get("/plus/status");
     setStatus(data); setLoading(false); return data;
+  };
+  const loadStreak = async () => {
+    try { const { data } = await api.get("/wellness/streak"); setStreak(data); } catch { /* best-effort */ }
   };
   const loadPlusData = async () => {
     const today = new Date().toISOString().slice(0, 10);
@@ -273,6 +282,7 @@ export default function Wellness() {
         api.get("/wellness/plan"), api.get("/wellness/food"), api.get(`/wellness/events?date=${today}`),
       ]);
       setPlan(p.data); setFood(f.data); setEvents(e.data);
+      loadStreak();
     } catch {
       toast.error("Couldn't load your plan — please try again in a moment");
     }
@@ -304,6 +314,36 @@ export default function Wellness() {
   const toggleItem = async (idx) => {
     const { data } = await api.put("/wellness/plan/toggle", { item_index: idx });
     setPlan((p) => ({ ...p, items: data.items }));
+    loadStreak();
+  };
+  const addTodo = async () => {
+    if (!newTodo.trim()) return;
+    try {
+      const { data } = await api.post("/wellness/plan/item", { title: newTodo.trim() });
+      setPlan((p) => ({ ...p, items: data.items }));
+      setNewTodo("");
+      toast.success("Added to your plan");
+    } catch { toast.error("Couldn't add that"); }
+  };
+  const delItem = async (idx) => {
+    try {
+      const { data } = await api.delete(`/wellness/plan/item/${idx}`);
+      setPlan((p) => ({ ...p, items: data.items }));
+    } catch { toast.error("Couldn't remove that"); }
+  };
+  const moveItem = async (idx, dir) => {
+    const items = plan?.items || [];
+    const j = idx + dir;
+    if (j < 0 || j >= items.length) return;
+    const order = items.map((_, i) => i);
+    [order[idx], order[j]] = [order[j], order[idx]];
+    // optimistic
+    const reordered = order.map((i) => items[i]);
+    setPlan((p) => ({ ...p, items: reordered }));
+    try {
+      const { data } = await api.put("/wellness/plan/reorder", { order });
+      setPlan((p) => ({ ...p, items: data.items }));
+    } catch { setPlan((p) => ({ ...p, items })); }
   };
   const regenerate = async () => {
     setBusy(true);
@@ -313,7 +353,7 @@ export default function Wellness() {
   const logFood = async () => {
     if (!foodText.trim()) return;
     setBusy(true);
-    try { await api.post("/wellness/food", { text: foodText }); setFoodText(""); const { data } = await api.get("/wellness/food"); setFood(data); }
+    try { await api.post("/wellness/food", { text: foodText, meal }); setFoodText(""); const { data } = await api.get("/wellness/food"); setFood(data); }
     finally { setBusy(false); }
   };
   const delFood = async (id) => { await api.delete(`/wellness/food/${id}`); const { data } = await api.get("/wellness/food"); setFood(data); };
@@ -334,6 +374,11 @@ export default function Wellness() {
         <span className="font-display font-semibold text-xl tracking-tight">CampionAI <span className="italic font-light">Plus</span></span>
       </div>
       <div className="flex items-center gap-3">
+        {streak.current > 0 && (
+          <span className="flex items-center gap-1.5 text-[11px] tracking-[0.1em] uppercase border border-amber-400/40 text-amber-400/90 px-2.5 py-1 rounded-full" data-testid="streak-badge" title={`Best streak: ${streak.best} days`}>
+            <Flame className="h-3.5 w-3.5" /> {streak.current}-day streak
+          </span>
+        )}
         {status.active && (
           <span className="text-[10px] tracking-[0.2em] uppercase border border-border px-2 py-1 rounded-full text-foreground/60" data-testid="plus-status-badge">
             {status.status === "trialing" ? "Trial" : "Active"}
@@ -382,6 +427,18 @@ export default function Wellness() {
 
           {/* PLAN */}
           <TabsContent value="plan" className="mt-8">
+            {items.length > 0 && donePct === 100 && (
+              <motion.div initial={{ opacity: 0, scale: 0.97 }} animate={{ opacity: 1, scale: 1 }}
+                className="mb-5 rounded-2xl border border-amber-400/40 bg-amber-400/[0.06] p-5 flex items-center gap-4" data-testid="plan-complete-celebration">
+                <PartyPopper className="h-6 w-6 text-amber-400 shrink-0" strokeWidth={1.5} />
+                <div>
+                  <p className="font-medium">That's your whole day, done.</p>
+                  <p className="text-sm text-muted-foreground">
+                    Beautiful work, {name}. {streak.current > 1 ? `That's ${streak.current} days in a row.` : "Come back tomorrow to start a streak."}
+                  </p>
+                </div>
+              </motion.div>
+            )}
             <div className="flex items-center justify-between mb-5">
               <h2 className="font-display font-light text-2xl">Your day, gently planned.</h2>
               <Button variant="outline" size="sm" className="rounded-full border-border gap-1.5" onClick={regenerate} disabled={busy} data-testid="regenerate-plan-button">
@@ -392,19 +449,28 @@ export default function Wellness() {
               {items.map((it, idx) => {
                 const Icon = TYPE_ICON[it.type] || Sparkles;
                 return (
-                  <motion.div key={idx} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.4, delay: idx * 0.05 }}
-                    className={`group flex items-center gap-4 p-5 rounded-2xl border transition-colors ${it.done ? "border-border bg-card/30" : "border-border bg-card/50 hover:border-foreground/30"}`} data-testid={`plan-item-${idx}`}>
+                  <motion.div key={idx} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.4, delay: idx * 0.03 }}
+                    className={`group flex items-center gap-3 p-5 rounded-2xl border transition-colors ${it.done ? "border-border bg-card/30" : "border-border bg-card/50 hover:border-foreground/30"}`} data-testid={`plan-item-${idx}`}>
+                    <div className="flex flex-col opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
+                      <button onClick={() => moveItem(idx, -1)} disabled={idx === 0} data-testid={`move-up-${idx}`}
+                        className="text-muted-foreground hover:text-foreground disabled:opacity-20 h-4"><ChevronUp className="h-4 w-4" /></button>
+                      <button onClick={() => moveItem(idx, 1)} disabled={idx === items.length - 1} data-testid={`move-down-${idx}`}
+                        className="text-muted-foreground hover:text-foreground disabled:opacity-20 h-4"><ChevronDown className="h-4 w-4" /></button>
+                    </div>
                     <div className={`h-11 w-11 rounded-xl flex items-center justify-center shrink-0 border ${it.done ? "border-border bg-transparent" : "border-border bg-white/[0.04]"}`}>
                       <Icon className={`h-5 w-5 ${it.done ? "text-muted-foreground" : "text-foreground/80"}`} strokeWidth={1.5} />
                     </div>
                     <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-2 flex-wrap">
                         <p className={`font-medium ${it.done ? "line-through text-muted-foreground" : ""}`}>{it.title}</p>
                         <span className="text-[10px] tracking-[0.12em] uppercase text-muted-foreground/70 border border-border rounded-full px-2 py-0.5">{it.type}</span>
+                        {it.custom && <span className="text-[10px] tracking-[0.12em] uppercase text-foreground/60 border border-border rounded-full px-2 py-0.5">Yours</span>}
                       </div>
-                      <p className="text-sm text-muted-foreground mt-0.5">{it.detail}</p>
+                      {it.detail && <p className="text-sm text-muted-foreground mt-0.5">{it.detail}</p>}
                       <p className="text-[11px] text-muted-foreground/70 font-mono-data mt-1.5">{it.duration_min} min · {it.time_of_day}</p>
                     </div>
+                    <button onClick={() => delItem(idx)} data-testid={`delete-item-${idx}`}
+                      className="text-muted-foreground hover:text-escalation opacity-0 group-hover:opacity-100 transition-opacity shrink-0"><Trash2 className="h-4 w-4" /></button>
                     <button onClick={() => toggleItem(idx)} data-testid={`toggle-item-${idx}`}
                       className={`h-8 w-8 rounded-full border flex items-center justify-center shrink-0 transition-all ${it.done ? "bg-primary border-primary scale-100" : "border-border hover:border-foreground hover:scale-105"}`}>
                       {it.done && <Check className="h-4 w-4 text-primary-foreground" strokeWidth={2.5} />}
@@ -412,6 +478,14 @@ export default function Wellness() {
                   </motion.div>
                 );
               })}
+            </div>
+            {/* Add your own to-do */}
+            <div className="flex gap-2 mt-4">
+              <Input className="rounded-full h-11" placeholder="Add your own to-do…" value={newTodo}
+                onChange={(e) => setNewTodo(e.target.value)} onKeyDown={(e) => e.key === "Enter" && addTodo()} data-testid="todo-input" />
+              <Button size="icon" className="rounded-full bg-primary text-primary-foreground hover:bg-zinc-200 shrink-0" onClick={addTodo} data-testid="add-todo-button">
+                <Plus className="h-4 w-4" />
+              </Button>
             </div>
           </TabsContent>
 
@@ -428,25 +502,50 @@ export default function Wellness() {
               </div>
             </div>
 
-            <div className="flex gap-2 mb-6">
-              <Input className="rounded-full h-11" placeholder='Describe a meal — "2 rotis and dal"…' value={foodText}
-                onChange={(e) => setFoodText(e.target.value)} onKeyDown={(e) => e.key === "Enter" && logFood()} data-testid="food-input" />
-              <Button className="rounded-full bg-primary text-primary-foreground hover:bg-zinc-200 px-6" onClick={logFood} disabled={busy} data-testid="log-food-button">
-                {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : "Log"}
-              </Button>
+            <div className="flex flex-col sm:flex-row gap-2 mb-6">
+              <div className="flex gap-1 rounded-full border border-border p-1 shrink-0">
+                {MEALS.map((mm) => (
+                  <button key={mm} onClick={() => setMeal(mm)} data-testid={`meal-${mm}`}
+                    className={`rounded-full px-3 py-1.5 text-xs capitalize transition-colors ${meal === mm ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"}`}>
+                    {mm}
+                  </button>
+                ))}
+              </div>
+              <div className="flex gap-2 flex-1">
+                <Input className="rounded-full h-11 flex-1" placeholder='Describe a meal — "2 rotis and dal"…' value={foodText}
+                  onChange={(e) => setFoodText(e.target.value)} onKeyDown={(e) => e.key === "Enter" && logFood()} data-testid="food-input" />
+                <Button className="rounded-full bg-primary text-primary-foreground hover:bg-zinc-200 px-6" onClick={logFood} disabled={busy} data-testid="log-food-button">
+                  {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : "Log"}
+                </Button>
+              </div>
             </div>
 
-            <div className="space-y-2">
+            <div className="space-y-5">
               {food.logs?.length === 0 && <p className="text-sm text-muted-foreground rounded-2xl border border-border bg-card/30 p-5">Nothing logged yet today.</p>}
-              {food.logs?.map((l) => (
-                <div key={l.id} className="group flex items-center justify-between rounded-2xl border border-border bg-card/50 p-4" data-testid={`food-log-${l.id}`}>
-                  <div className="flex items-center gap-3 min-w-0">
-                    <div className="h-9 w-9 rounded-lg bg-white/[0.04] border border-border flex items-center justify-center shrink-0"><Utensils className="h-4 w-4 text-foreground/70" strokeWidth={1.5} /></div>
-                    <div className="min-w-0"><p className="text-sm font-medium truncate">{l.summary}</p><p className="text-[11px] text-muted-foreground font-mono-data">{l.calories} kcal · P{l.protein_g} C{l.carbs_g} F{l.fat_g}</p></div>
+              {MEALS.map((mm) => {
+                const group = (food.logs || []).filter((l) => (l.meal || "snack") === mm);
+                if (group.length === 0) return null;
+                const kcal = group.reduce((s, l) => s + (l.calories || 0), 0);
+                return (
+                  <div key={mm} data-testid={`meal-group-${mm}`}>
+                    <div className="flex items-center justify-between mb-2 px-1">
+                      <p className="text-[10px] tracking-[0.2em] uppercase text-muted-foreground capitalize">{mm}</p>
+                      <span className="text-[11px] text-muted-foreground font-mono-data">{kcal} kcal</span>
+                    </div>
+                    <div className="space-y-2">
+                      {group.map((l) => (
+                        <div key={l.id} className="group flex items-center justify-between rounded-2xl border border-border bg-card/50 p-4" data-testid={`food-log-${l.id}`}>
+                          <div className="flex items-center gap-3 min-w-0">
+                            <div className="h-9 w-9 rounded-lg bg-white/[0.04] border border-border flex items-center justify-center shrink-0"><Utensils className="h-4 w-4 text-foreground/70" strokeWidth={1.5} /></div>
+                            <div className="min-w-0"><p className="text-sm font-medium truncate">{l.summary}</p><p className="text-[11px] text-muted-foreground font-mono-data">{l.calories} kcal · P{l.protein_g} C{l.carbs_g} F{l.fat_g}</p></div>
+                          </div>
+                          <button onClick={() => delFood(l.id)} className="text-muted-foreground hover:text-escalation opacity-0 group-hover:opacity-100 transition-opacity shrink-0"><Trash2 className="h-4 w-4" /></button>
+                        </div>
+                      ))}
+                    </div>
                   </div>
-                  <button onClick={() => delFood(l.id)} className="text-muted-foreground hover:text-escalation opacity-0 group-hover:opacity-100 transition-opacity shrink-0"><Trash2 className="h-4 w-4" /></button>
-                </div>
-              ))}
+                );
+              })}
             </div>
           </TabsContent>
 

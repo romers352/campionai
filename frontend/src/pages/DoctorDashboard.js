@@ -15,7 +15,17 @@ import { Loader2, Trash2, Plus, Video, Phone, MessageSquare, Wallet } from "luci
 
 const DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
 const MODE_ICON = { video: Video, audio: Phone, chat: MessageSquare };
+const MODE_LABEL = { video: "Video call", audio: "Audio call", chat: "Chat" };
 const HEARTBEAT_MS = 30000;   // server treats >90s without a ping as offline
+
+const initials = (name = "") =>
+  name.split(" ").filter(Boolean).slice(0, 2).map((w) => w[0]).join("").toUpperCase() || "?";
+
+const PatientAvatar = ({ name }) => (
+  <div className="h-9 w-9 rounded-full border border-border bg-white/[0.04] flex items-center justify-center shrink-0">
+    <span className="text-xs font-medium text-foreground/80">{initials(name)}</span>
+  </div>
+);
 
 const fmt = (iso) => {
   if (!iso) return "—";
@@ -119,6 +129,11 @@ export default function DoctorDashboard() {
     <div className="min-h-screen bg-background">
       <header className="glass sticky top-0 z-20 h-16 flex items-center justify-between px-6">
         <div className="flex items-center gap-3 min-w-0">
+          <div className="h-10 w-10 rounded-full border border-border bg-white/[0.04] flex items-center justify-center shrink-0 overflow-hidden">
+            {me.photo_path
+              ? <img src={me.photo_path} alt="" className="h-full w-full object-cover" />
+              : <span className="text-sm font-medium text-foreground/80">{initials(me.name)}</span>}
+          </div>
           <span className="font-display font-semibold text-xl tracking-tight truncate">{me.name}</span>
           <RatingStars value={me.rating_avg} count={me.rating_count} testid="my-rating" />
         </div>
@@ -164,19 +179,24 @@ export default function DoctorDashboard() {
             )}
             {open.length > 0 && (
               <div>
-                <p className="text-[10px] tracking-[0.3em] uppercase text-muted-foreground mb-3">Waiting for you</p>
-                <div className="space-y-px bg-border border border-border rounded-2xl overflow-hidden" data-testid="open-requests">
+                <p className="text-[10px] tracking-[0.3em] uppercase text-emerald-400 mb-3 flex items-center gap-2">
+                  <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 soft-pulse" /> Waiting for you
+                </p>
+                <div className="space-y-px bg-emerald-400/20 border border-emerald-400/30 rounded-2xl overflow-hidden" data-testid="open-requests">
                   {open.map((s) => {
                     const Icon = MODE_ICON[s.mode] || Video;
                     return (
-                      <div key={s.id} className="bg-card/60 p-5 flex items-center gap-4" data-testid={`request-${s.id}`}>
-                        <Icon className="h-4 w-4 text-muted-foreground shrink-0" strokeWidth={1.5} />
+                      <div key={s.id} className="bg-card/80 p-5 flex items-center gap-4" data-testid={`request-${s.id}`}>
+                        <PatientAvatar name={s.user_name} />
                         <div className="flex-1 min-w-0">
                           <p className="text-sm font-medium truncate">{s.user_name}</p>
-                          {s.note && <p className="text-sm text-muted-foreground truncate">{s.note}</p>}
+                          <p className="text-xs text-muted-foreground flex items-center gap-1.5 mt-0.5">
+                            <Icon className="h-3 w-3" strokeWidth={1.5} /> {MODE_LABEL[s.mode] || s.mode}
+                          </p>
+                          {s.note && <p className="text-sm text-muted-foreground truncate mt-0.5">{s.note}</p>}
                           {s.kind === "crisis" && <span className="text-[10px] tracking-[0.15em] uppercase text-escalation">Crisis</span>}
                         </div>
-                        <Button className="rounded-full bg-primary text-primary-foreground hover:bg-zinc-200 shrink-0"
+                        <Button className="rounded-full bg-emerald-500 text-white hover:bg-emerald-400 shrink-0"
                           onClick={() => accept(s.id)} disabled={busy} data-testid={`accept-${s.id}`}>Accept</Button>
                       </div>
                     );
@@ -190,15 +210,23 @@ export default function DoctorDashboard() {
                 <p className="text-sm text-muted-foreground rounded-2xl border border-border bg-card/30 p-5" data-testid="no-upcoming">Nothing scheduled.</p>
               ) : (
                 <div className="space-y-px bg-border border border-border rounded-2xl overflow-hidden">
-                  {upcoming.map((s) => (
-                    <div key={s.id} className="bg-card/60 p-5 flex items-center gap-4" data-testid={`upcoming-${s.id}`}>
-                      <span className="font-mono-data text-xs text-muted-foreground w-32 shrink-0">{fmt(s.scheduled_at || s.created_at)}</span>
-                      <p className="flex-1 text-sm truncate">{s.user_name}</p>
-                      <span className="text-xs text-muted-foreground capitalize">{s.status}</span>
-                      <Button variant="outline" className="rounded-full border-border shrink-0"
-                        onClick={() => navigate(`/consult/${s.id}`)} data-testid={`join-${s.id}`}>Join</Button>
-                    </div>
-                  ))}
+                  {upcoming.map((s) => {
+                    const Icon = MODE_ICON[s.mode] || Video;
+                    return (
+                      <div key={s.id} className="bg-card/60 p-5 flex items-center gap-4" data-testid={`upcoming-${s.id}`}>
+                        <PatientAvatar name={s.user_name} />
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm truncate">{s.user_name}</p>
+                          <p className="font-mono-data text-xs text-muted-foreground flex items-center gap-1.5 mt-0.5">
+                            <Icon className="h-3 w-3" strokeWidth={1.5} /> {fmt(s.scheduled_at || s.created_at)}
+                          </p>
+                        </div>
+                        <span className="text-xs text-muted-foreground capitalize hidden sm:block">{s.status}</span>
+                        <Button variant="outline" className="rounded-full border-border shrink-0"
+                          onClick={() => navigate(`/consult/${s.id}`)} data-testid={`join-${s.id}`}>Join</Button>
+                      </div>
+                    );
+                  })}
                 </div>
               )}
             </div>

@@ -174,11 +174,67 @@ backend:
         -working: true
         -agent: "testing"
         -comment: "VERIFIED: (1) Bogus session_id 'bogus-xyz-12345' returns HTTP 401 with detail 'Could not verify Google sign-in' (NOT 500). (2) Missing session_id field returns 422 validation error (NOT 500 crash). (3) Empty session_id returns 401 (NOT 500). (4) Malformed body returns 422 (NOT 500). (5) NO-REGRESSION: Email/password auth fully working - login (200 with token), /api/auth/me (200), register new user (200 with token), duplicate email registration (400 'Email already registered'). Backend logs confirm Emergent session-data API calls. Test file: /app/backend_test.py"
+  - task: "Wellness plan manual items + reorder + streak"
+    implemented: true
+    working: true
+    file: "backend/server.py, backend/models.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        -working: "NA"
+        -agent: "main"
+        -comment: "New endpoints requiring Plus subscription: POST /api/wellness/plan/item (adds custom item with custom:true flag), DELETE /api/wellness/plan/item/{index} (removes by index, 404 if out-of-range), PUT /api/wellness/plan/reorder (validates order is permutation of range(n) else 400), GET /api/wellness/streak (returns {current, best, today_complete} counting consecutive fully-done days). GET /api/wellness/plan auto-generates if none exists."
+        -working: true
+        -agent: "testing"
+        -comment: "VERIFIED: (1) GET /api/wellness/plan returns 200 with items[] array (auto-generated 6 items). (2) POST /api/wellness/plan/item with {title:'Drink water', detail:'', type:'task', duration_min:5, time_of_day:'morning'} returns 200 with ok:true and items array containing new item with custom:true flag. (3) DELETE /api/wellness/plan/item/{index} returns 200 and removes item. (4) DELETE with out-of-range index (999) returns 404 correctly. (5) PUT /api/wellness/plan/reorder with valid permutation (reversed order) returns 200 with reordered items. (6) PUT /api/wellness/plan/reorder with invalid order [0,0,1] returns 400 'Invalid order'. (7) GET /api/wellness/streak returns 200 with {current:0, best:0, today_complete:false} initially. (8) After toggling all items to done, streak returns {current:1, today_complete:true}. All endpoints require Plus (started trial via POST /api/plus/start-trial). Test file: /app/backend_test.py"
+  - task: "Wellness food meal + edit"
+    implemented: true
+    working: true
+    file: "backend/server.py, backend/models.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        -working: "NA"
+        -agent: "main"
+        -comment: "Enhanced POST /api/wellness/food to accept optional meal field (breakfast|lunch|dinner|snack, default snack). New PUT /api/wellness/food/{fid} endpoint edits summary/calories/protein_g/carbs_g/fat_g/meal; returns 404 if not owned by user; returns 400 if empty body {}. Both require Plus subscription."
+        -working: true
+        -agent: "testing"
+        -comment: "VERIFIED: (1) POST /api/wellness/food with {text:'2 eggs and toast', meal:'breakfast'} returns 200 with meal:'breakfast' and numeric calories:290, protein_g:15, carbs_g, fat_g (LLM-estimated). (2) GET /api/wellness/food returns 200 with {totals:{}, logs:[]} containing the new log with meal field. (3) PUT /api/wellness/food/{fid} with {summary:'Eggs and whole wheat toast', calories:250} returns 200 with updated values reflected. (4) PUT with unknown fid returns 404 correctly. (5) PUT with empty body {} returns 400 'Nothing to update'. All endpoints require Plus. Test file: /app/backend_test.py"
+  - task: "Chat feedback endpoint"
+    implemented: true
+    working: true
+    file: "backend/server.py, backend/models.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        -working: "NA"
+        -agent: "main"
+        -comment: "New POST /api/chat/feedback endpoint accepts {session_id?, content?, rating:'up'|'down'}. Requires auth (get_current_user). rating must match pattern ^(up|down)$ else 422. Stores to message_feedback collection with user_id, created_at."
+        -working: true
+        -agent: "testing"
+        -comment: "VERIFIED: (1) POST /api/chat/feedback with {session_id:null, content:'This was helpful', rating:'up'} returns 200 with {ok:true}. (2) rating:'down' also returns 200 with {ok:true}. (3) Invalid rating:'sideways' returns 422 validation error (NOT 500). (4) Missing Authorization header returns 401 (auth required). Test file: /app/backend_test.py"
+  - task: "Doctors search param + demo seed"
+    implemented: true
+    working: true
+    file: "backend/doctors.py, backend/seed_doctors.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        -working: "NA"
+        -agent: "main"
+        -comment: "Enhanced GET /api/doctors with optional q query param. Filters by name/specialty/credentials (case-insensitive, python-side). 5 demo verified doctors seeded with @demo.campionai emails. Returns empty list [] if no matches."
+        -working: true
+        -agent: "testing"
+        -comment: "VERIFIED: (1) GET /api/doctors returns 200 with list of 5 doctors (demo seed confirmed). (2) GET /api/doctors?q=aisha returns 200 with 1 matching doctor by name. (3) GET /api/doctors?q=sleep returns 200 with 1 matching doctor by specialty. (4) GET /api/doctors?q=zzzznomatch returns 200 with empty list []. Search filters working correctly (case-insensitive, matches name/specialty/credentials). Test file: /app/backend_test.py"
 
 metadata:
   created_by: "main_agent"
-  version: "1.4"
-  test_sequence: 5
+  version: "1.6"
+  test_sequence: 7
   run_ui: false
 
 test_plan:
@@ -186,6 +242,24 @@ test_plan:
   stuck_tasks: []
   test_all: false
   test_priority: "high_first"
+
+new_backend_tasks:
+  - task: "Wellness plan manual items + reorder + streak"
+    file: "backend/server.py, backend/models.py"
+    endpoints: "POST /api/wellness/plan/item, DELETE /api/wellness/plan/item/{index}, PUT /api/wellness/plan/reorder, GET /api/wellness/streak"
+    notes: "All require Plus (require_plus). add appends a custom todo to today's plan; delete removes by index; reorder validates the order is a permutation of range(n) else 400; streak returns {current,best,today_complete} counting consecutive fully-done days."
+  - task: "Wellness food meal + edit"
+    file: "backend/server.py, backend/models.py"
+    endpoints: "POST /api/wellness/food (now accepts optional meal), PUT /api/wellness/food/{fid}"
+    notes: "meal stored (default snack). PUT edits summary/calories/macros/meal; 404 if not owned; 400 if empty body."
+  - task: "Chat feedback"
+    file: "backend/server.py, backend/models.py"
+    endpoints: "POST /api/chat/feedback {session_id?, content?, rating: up|down}"
+    notes: "Requires auth (get_current_user). rating must match ^(up|down)$ else 422. Stores to message_feedback collection."
+  - task: "Doctors search param + demo seed"
+    file: "backend/doctors.py, backend/seed_doctors.py"
+    endpoints: "GET /api/doctors?q=<term>"
+    notes: "q filters by name/specialty/credentials (case-insensitive, python-side). 5 demo verified doctors seeded (email @demo.campionai)."
 
 agent_communication:
     -agent: "main"
@@ -209,5 +283,9 @@ agent_communication:
     -message: "✅ ALL BACKEND TESTS PASSED - CONTACT FORM + NO-REGRESSION VERIFIED. (1) POST /api/contact with valid payload returns 200 with {ok:true, message}. (2) Works WITHOUT Authorization header (public endpoint confirmed). (3) Invalid email returns 422 validation error (NOT 500). (4) Missing required fields (name/message) return 422 (NOT 500). (5) Repeated submissions work without crashing - documents stored successfully. (6) NO-REGRESSION CONFIRMED: Email/password auth fully working - login returns 200 with token, /api/auth/me returns 200, register new user returns 200 with token, duplicate email returns 400 'Email already registered'. (7) Google OAuth and PayPal integration still working (no regression). Test file: /app/backend_test.py. All requirements from review_request met. ALL BACKEND FEATURES WORKING CORRECTLY - READY FOR USER SUMMARY."
 
     -message: "✅ ALL BACKEND TESTS PASSED - GOOGLE SIGN-IN + NO-REGRESSION VERIFIED. (1) POST /api/auth/google/session with bogus session_id returns 401 'Could not verify Google sign-in' (NOT 500). (2) Missing/empty session_id returns 422/401 validation errors (NOT 500 crash). (3) Malformed body returns 422 (NOT 500). (4) NO-REGRESSION CONFIRMED: Email/password auth fully working - login returns 200 with token, /api/auth/me returns 200, register new user returns 200 with token, duplicate email returns 400 'Email already registered'. (5) PayPal integration still working (no regression). Test file: /app/backend_test.py. All requirements from review_request met."
+
+agent_communication:
+    -agent: "testing"
+    -message: "✅ ALL NEW BACKEND ENDPOINTS TESTED AND PASSING. (1) WELLNESS PLAN: GET /api/wellness/plan returns items array (auto-generated). POST /api/wellness/plan/item adds custom item with custom:true flag. DELETE /api/wellness/plan/item/{index} removes item (404 for out-of-range). PUT /api/wellness/plan/reorder validates permutation (400 for invalid order like [0,0,1]). (2) WELLNESS STREAK: GET /api/wellness/streak returns {current, best, today_complete}. After completing all items, today_complete becomes true and current streak increments to 1. (3) WELLNESS FOOD: POST /api/wellness/food with meal:'breakfast' returns numeric calories/protein_g/carbs_g/fat_g. GET /api/wellness/food returns totals + logs with meal field. PUT /api/wellness/food/{fid} edits log (404 for unknown fid, 400 for empty body). (4) CHAT FEEDBACK: POST /api/chat/feedback with rating:'up' or 'down' returns {ok:true}. Invalid rating 'sideways' returns 422. Missing auth returns 401. (5) DOCTORS SEARCH: GET /api/doctors returns 5 demo doctors. GET /api/doctors?q=aisha matches by name. GET /api/doctors?q=sleep matches by specialty. GET /api/doctors?q=zzzznomatch returns empty list. (6) NO-REGRESSION: POST /api/auth/login returns 200 with token. All wellness endpoints require Plus subscription (started trial via POST /api/plus/start-trial). Test file: /app/backend_test.py. ALL REQUIREMENTS FROM REVIEW_REQUEST MET."
 
 #====================================================================================================

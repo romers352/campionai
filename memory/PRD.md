@@ -75,3 +75,10 @@ A privacy-first, multimodal AI daily companion that feels like a trusted close f
 - Trusted-contact/professional alerts + voice TTS require keys — until added they are surfaced in-app/logged (email/SMS) or disabled (voice).
 - Stripe runs in TEST mode (card 4242 4242 4242 4242). Trial + access are app-managed; donations & payments are real test-mode checkouts.
 - `GET /api/checkin` has a write side-effect — acceptable for MVP.
+
+## Recovery + Improvements (2026-08-28)
+- [x] **Env recovery**: both `.env` files were lost on restore (gitignored). Recreated `backend/.env` (new JWT_SECRET, MONGO_URL, DB_NAME=campionai, CORS, ADMIN_PASSWORD, EMERGENT_LLM_KEY) and `frontend/.env` (REACT_APP_BACKEND_URL + WDS_SOCKET_PORT). App fully restored. PayPal/Twilio/Resend/Fish/OpenRouter keys left empty (graceful degradation) — re-add to enable.
+- [x] **Doctor UI/UX**: directory redesigned — avatars/initials, specialty chips, bio snippet, "per session" pricing, online count, **search bar** (`GET /api/doctors?q=`), skeleton loaders, richer empty state. Dashboard: doctor avatar in header, patient-initials avatars, mode labels, emerald "Waiting for you" queue with accented Accept. 5 demo verified doctors seeded via `seed_doctors.py`.
+- [x] **AI Chat**: hover message actions (copy, regenerate last reply, thumbs up/down → `POST /api/chat/feedback`), tap-to-send starter prompts on empty state, floating scroll-to-bottom + smart auto-scroll, richer formatting (bullet lists + clickable links), sidebar "Talk to a doctor" link.
+- [x] **Wellness planning/to-dos**: add-your-own to-do (`POST /api/wellness/plan/item`), delete (`DELETE .../item/{i}`), reorder up/down (`PUT .../plan/reorder`), **streak** badge + 100%-complete celebration (`GET /api/wellness/streak`), food meal tagging + grouped-by-meal logs (`meal` on `POST /api/wellness/food`), food edit (`PUT /api/wellness/food/{fid}`).
+- [x] Backend: 27/27 new-endpoint tests passed (auth-gated, Plus-gated, validation 400/404/422). Frontend compiled successfully.

@@ -135,6 +135,16 @@ class CheckoutInput(BaseModel):
 class FoodInput(BaseModel):
     text: str
     date: Optional[str] = None
+    meal: Optional[str] = None  # breakfast | lunch | dinner | snack
+
+
+class FoodEdit(BaseModel):
+    summary: Optional[str] = Field(default=None, max_length=120)
+    calories: Optional[int] = Field(default=None, ge=0, le=10000)
+    protein_g: Optional[int] = Field(default=None, ge=0, le=2000)
+    carbs_g: Optional[int] = Field(default=None, ge=0, le=2000)
+    fat_g: Optional[int] = Field(default=None, ge=0, le=2000)
+    meal: Optional[str] = None
 
 
 class EventInput(BaseModel):
@@ -147,6 +157,24 @@ class EventInput(BaseModel):
 
 class PlanItemToggle(BaseModel):
     item_index: int
+
+
+class PlanItemAdd(BaseModel):
+    title: str = Field(min_length=1, max_length=120)
+    detail: Optional[str] = Field(default="", max_length=300)
+    type: Optional[str] = "task"  # meditation | yoga | breathing | movement | task
+    duration_min: Optional[int] = Field(default=10, ge=1, le=600)
+    time_of_day: Optional[str] = "morning"  # morning | afternoon | evening
+
+
+class PlanReorder(BaseModel):
+    order: List[int]
+
+
+class ChatFeedback(BaseModel):
+    session_id: Optional[str] = None
+    content: Optional[str] = Field(default="", max_length=4000)
+    rating: str = Field(pattern="^(up|down)$")
 
 
 class PaypalActivate(BaseModel):

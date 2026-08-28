@@ -72,6 +72,7 @@ def make_router(db, get_current_user, get_admin_user, get_doctor_user) -> APIRou
         language: str = Query(None),
         volunteer_only: bool = Query(False),
         online_only: bool = Query(False),
+        q_search: str = Query(None, alias="q"),
         user=Depends(get_current_user),
     ):
         """Matching is country + language — for a remote consult those are what
@@ -92,6 +93,11 @@ def make_router(db, get_current_user, get_admin_user, get_doctor_user) -> APIRou
             docs = await db.doctors.find(q, {"_id": 0}).to_list(200)
 
         out = [public_doctor(d) for d in docs]
+        if q_search:
+            term = q_search.strip().lower()
+            out = [d for d in out if term in (d.get("name") or "").lower()
+                   or term in (d.get("specialty") or "").lower()
+                   or term in (d.get("credentials") or "").lower()]
         if online_only:
             out = [d for d in out if d["is_online"]]
         out.sort(key=lambda d: (not d["is_online"], -d["rating_avg"], -d["rating_count"]))

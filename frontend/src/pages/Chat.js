@@ -17,7 +17,15 @@ import { useVisibilityRefetch } from "@/hooks/use-visibility-refetch";
 import {
   Plus, ArrowUp, Brain, Settings, LifeBuoy, Menu, Lock,
   MessageSquare, Trash2, Shield, Mic, Volume2, VolumeX, Sparkles, Paperclip, X, Loader2,
+  Copy, RefreshCw, ThumbsUp, ThumbsDown, Check, ChevronDown, Stethoscope,
 } from "lucide-react";
+
+const STARTERS = [
+  "I had a rough day and just need to vent.",
+  "Help me plan a calmer evening routine.",
+  "I'm feeling anxious about tomorrow.",
+  "Something good happened — let me tell you.",
+];
 
 export default function Chat() {
   const { user } = useAuth();
@@ -38,6 +46,10 @@ export default function Chat() {
   const [listening, setListening] = useState(false);
   const [attachment, setAttachment] = useState(null);
   const [uploading, setUploading] = useState(false);
+  const [atBottom, setAtBottom] = useState(true);
+  const [copiedId, setCopiedId] = useState(null);
+  const [feedback, setFeedback] = useState({});   // {messageId: 'up'|'down'}
+  const lastUserText = useRef("");
   const scrollRef = useRef(null);
   const inputRef = useRef(null);
   const recognitionRef = useRef(null);
@@ -64,8 +76,48 @@ export default function Chat() {
     api.get("/checkin").then(({ data }) => { if (data.due) setCheckin(data.message); }).catch(() => {});
   });
   useEffect(() => {
-    if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-  }, [messages, thinking]);
+    if (atBottom && scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+  }, [messages, thinking, atBottom]);
+
+  const onScroll = () => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const near = el.scrollHeight - el.scrollTop - el.clientHeight < 120;
+    setAtBottom(near);
+  };
+
+  const scrollToBottom = () => {
+    if (scrollRef.current) {
+      scrollRef.current.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
+      setAtBottom(true);
+    }
+  };
+
+  const copyMessage = (id, text) => {
+    navigator.clipboard?.writeText(text).then(() => {
+      setCopiedId(id);
+      setTimeout(() => setCopiedId(null), 1500);
+    }).catch(() => toast.error("Couldn't copy"));
+  };
+
+  const sendFeedback = async (id, text, rating) => {
+    setFeedback((f) => ({ ...f, [id]: rating }));
+    try {
+      await api.post("/chat/feedback", { session_id: activeId, content: text, rating });
+      toast(rating === "up" ? "Thanks — glad that helped" : "Thanks — I'll keep learning");
+    } catch { /* best-effort */ }
+  };
+
+  const regenerate = () => {
+    if (streaming || !lastUserText.current) return;
+    // Drop the trailing assistant reply, then re-ask.
+    setMessages((m) => {
+      const copy = [...m];
+      if (copy.length && copy[copy.length - 1].role === "assistant") copy.pop();
+      return copy;
+    });
+    send(lastUserText.current, true);
+  };
 
   const speak = async (text) => {
     if (!text) return;
@@ -148,16 +200,21 @@ export default function Chat() {
     toast.success("Conversation deleted");
   };
 
-  const send = async (overrideText) => {
+  const send = async (overrideText, isRegen = false) => {
     const text = (overrideText ?? input).trim();
     if ((!text && !attachment) || streaming || uploading) return;
-    setInput("");
+    if (!isRegen) { setInput(""); lastUserText.current = text; }
     setCheckin(null);
-    const att = attachment;
-    setAttachment(null);
-    const userMsg = { id: `u-${Date.now()}`, role: "user", content: text, image_preview: att?.preview, image_path: att?.path };
+    setAtBottom(true);
+    const att = isRegen ? null : attachment;
+    if (!isRegen) setAttachment(null);
     const aiId = `a-${Date.now()}`;
-    setMessages((m) => [...m, userMsg, { id: aiId, role: "assistant", content: "", escalation: null }]);
+    if (isRegen) {
+      setMessages((m) => [...m, { id: aiId, role: "assistant", content: "", escalation: null }]);
+    } else {
+      const userMsg = { id: `u-${Date.now()}`, role: "user", content: text, image_preview: att?.preview, image_path: att?.path };
+      setMessages((m) => [...m, userMsg, { id: aiId, role: "assistant", content: "", escalation: null }]);
+    }
     setStreaming(true);
     setThinking(true);
     let sessionId = activeId;
@@ -221,6 +278,7 @@ export default function Chat() {
       </div>
       <div className="p-3 border-t border-border space-y-0.5">
         <NavBtn icon={Sparkles} label={user?.plus?.active ? "CampionAI Plus" : "Upgrade to Plus"} testid="open-wellness-button" onClick={() => navigate("/wellness")} />
+        <NavBtn icon={Stethoscope} label="Talk to a doctor" testid="open-doctors-button" onClick={() => navigate("/doctors")} />
         <NavBtn icon={Brain} label="Memory" testid="open-memory-button" onClick={() => { setMemOpen(true); setMobileNav(false); }} />
         <NavBtn icon={LifeBuoy} label="Talk to a human" testid="open-handoff-button" danger onClick={() => { requestHandoff(); setMobileNav(false); }} />
         <NavBtn icon={Settings} label="Settings" testid="open-settings-button" onClick={() => { setSetOpen(true); setMobileNav(false); }} />
@@ -268,7 +326,7 @@ export default function Chat() {
           </div>
         </header>
 
-        <div ref={scrollRef} className="flex-1 overflow-y-auto">
+        <div ref={scrollRef} onScroll={onScroll} className="flex-1 overflow-y-auto relative">
           <div className="max-w-3xl mx-auto px-6 md:px-8 py-10">
             {checkin && messages.length === 0 && (
               <CheckinBanner
@@ -282,14 +340,22 @@ export default function Chat() {
               <div className="py-24 md:py-32">
                 <p className="text-[10px] tracking-[0.25em] uppercase text-muted-foreground mb-6">Good to see you</p>
                 <h2 className="font-display font-light text-4xl md:text-5xl tracking-tight mb-4">Hey {name}.</h2>
-                <p className="text-muted-foreground text-lg max-w-md leading-relaxed">
+                <p className="text-muted-foreground text-lg max-w-md leading-relaxed mb-8">
                   What's on your mind today — a win, a worry, or just a random thought? I'm listening.
                 </p>
+                <div className="flex flex-wrap gap-2 max-w-xl" data-testid="starter-prompts">
+                  {STARTERS.map((s) => (
+                    <button key={s} onClick={() => send(s)} data-testid="starter-prompt"
+                      className="text-sm text-left rounded-2xl border border-border bg-card/40 hover:border-foreground/40 hover:bg-accent transition-colors px-4 py-2.5 text-foreground/80">
+                      {s}
+                    </button>
+                  ))}
+                </div>
               </div>
             )}
 
             <div className="space-y-10">
-              {messages.map((m) => (
+              {messages.map((m, idx) => (
                 <div key={m.id}>
                   {m.role === "user" ? (
                     <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.4 }}
@@ -300,7 +366,7 @@ export default function Chat() {
                       {m.content && <p className="text-base leading-relaxed whitespace-pre-wrap text-foreground/90 text-right">{m.content}</p>}
                     </motion.div>
                   ) : (
-                    <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5 }} data-testid="ai-message">
+                    <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5 }} data-testid="ai-message" className="group">
                       <p className="text-[10px] tracking-[0.25em] uppercase text-muted-foreground mb-3">CampionAI</p>
                       {m.content ? (
                         <MessageText text={m.content} />
@@ -308,6 +374,28 @@ export default function Chat() {
                         <span className="font-ai text-xl font-light text-muted-foreground soft-pulse">thinking…</span>
                       ) : null}
                       {m.escalation && <EscalationCard escalation={m.escalation} />}
+                      {m.content && !streaming && (
+                        <div className="flex items-center gap-1 mt-3 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity" data-testid="message-actions">
+                          <button onClick={() => copyMessage(m.id, m.content)} title="Copy" data-testid="copy-message"
+                            className="h-8 w-8 rounded-full flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-accent transition-colors">
+                            {copiedId === m.id ? <Check className="h-3.5 w-3.5 text-emerald-400" /> : <Copy className="h-3.5 w-3.5" />}
+                          </button>
+                          {idx === messages.length - 1 && (
+                            <button onClick={regenerate} title="Regenerate" data-testid="regenerate-message"
+                              className="h-8 w-8 rounded-full flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-accent transition-colors">
+                              <RefreshCw className="h-3.5 w-3.5" />
+                            </button>
+                          )}
+                          <button onClick={() => sendFeedback(m.id, m.content, "up")} title="Good response" data-testid="feedback-up"
+                            className={`h-8 w-8 rounded-full flex items-center justify-center transition-colors ${feedback[m.id] === "up" ? "text-emerald-400" : "text-muted-foreground hover:text-foreground hover:bg-accent"}`}>
+                            <ThumbsUp className="h-3.5 w-3.5" />
+                          </button>
+                          <button onClick={() => sendFeedback(m.id, m.content, "down")} title="Bad response" data-testid="feedback-down"
+                            className={`h-8 w-8 rounded-full flex items-center justify-center transition-colors ${feedback[m.id] === "down" ? "text-escalation" : "text-muted-foreground hover:text-foreground hover:bg-accent"}`}>
+                            <ThumbsDown className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                      )}
                     </motion.div>
                   )}
                 </div>
@@ -316,7 +404,13 @@ export default function Chat() {
           </div>
         </div>
 
-        <div className="px-6 md:px-8 pb-8 pt-2">
+        <div className="px-6 md:px-8 pb-8 pt-2 relative">
+          {!atBottom && messages.length > 0 && (
+            <button onClick={scrollToBottom} data-testid="scroll-to-bottom"
+              className="absolute -top-6 left-1/2 -translate-x-1/2 h-9 w-9 rounded-full glass border border-border flex items-center justify-center text-foreground/70 hover:text-foreground shadow-lg z-10">
+              <ChevronDown className="h-4 w-4" />
+            </button>
+          )}
           <div className="max-w-3xl mx-auto">
             <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={pickFile} data-testid="file-input" />
             <div className="rounded-[1.75rem] border border-border bg-white/[0.03] backdrop-blur-md px-2.5 py-2 focus-within:border-foreground/40 transition-colors">
@@ -382,22 +476,43 @@ function NavBtn({ icon: Icon, label, onClick, testid, danger }) {
   );
 }
 
+function renderInline(text, keyPrefix) {
+  // Split on bold (**..**) and URLs, keeping delimiters.
+  const tokens = text.split(/(\*\*[^*]+\*\*|https?:\/\/[^\s]+)/g);
+  return tokens.map((p, i) => {
+    if (p.startsWith("**") && p.endsWith("**")) {
+      return <strong key={`${keyPrefix}-${i}`} className="font-medium">{p.slice(2, -2)}</strong>;
+    }
+    if (/^https?:\/\//.test(p)) {
+      return (
+        <a key={`${keyPrefix}-${i}`} href={p} target="_blank" rel="noopener noreferrer"
+          className="underline decoration-foreground/30 underline-offset-2 hover:decoration-foreground break-words">
+          {p}
+        </a>
+      );
+    }
+    return <span key={`${keyPrefix}-${i}`}>{p}</span>;
+  });
+}
+
 function MessageText({ text }) {
   const lines = text.split("\n");
+  const blocks = [];
+  let list = null;
+  lines.forEach((line, li) => {
+    const bullet = line.match(/^\s*[-*•]\s+(.*)$/);
+    if (bullet) {
+      if (!list) { list = []; }
+      list.push(<li key={`li-${li}`} className="pl-1">{renderInline(bullet[1], `il-${li}`)}</li>);
+    } else {
+      if (list) { blocks.push(<ul key={`ul-${li}`} className="list-disc pl-6 space-y-1.5 my-2">{list}</ul>); list = null; }
+      if (line.trim()) blocks.push(<p key={`p-${li}`} className={blocks.length ? "mt-3" : ""}>{renderInline(line, `p-${li}`)}</p>);
+    }
+  });
+  if (list) blocks.push(<ul key="ul-end" className="list-disc pl-6 space-y-1.5 my-2">{list}</ul>);
   return (
     <div className="font-ai text-xl md:text-[1.35rem] font-light leading-relaxed text-foreground">
-      {lines.map((line, li) => {
-        const parts = line.split(/(\*\*[^*]+\*\*)/g);
-        return (
-          <p key={li} className={li > 0 ? "mt-3" : ""}>
-            {parts.map((p, i) =>
-              p.startsWith("**") && p.endsWith("**")
-                ? <strong key={i} className="font-medium">{p.slice(2, -2)}</strong>
-                : <span key={i}>{p}</span>
-            )}
-          </p>
-        );
-      })}
+      {blocks}
     </div>
   );
 }
