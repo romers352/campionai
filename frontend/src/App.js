@@ -10,6 +10,12 @@ import Chat from "@/pages/Chat";
 import Admin from "@/pages/Admin";
 import Wellness from "@/pages/Wellness";
 import { PaymentSuccess, PaymentCancel } from "@/pages/PaymentReturn";
+import About from "@/pages/About";
+import Contact from "@/pages/Contact";
+import FAQ from "@/pages/FAQ";
+import Privacy from "@/pages/Privacy";
+import Terms from "@/pages/Terms";
+import Safety from "@/pages/Safety";
 import { Loader2 } from "lucide-react";
 
 function FullLoader() {
@@ -54,6 +60,13 @@ function AppInner() {
       <Route path="/" element={loading ? <FullLoader /> : user ? <Navigate to={user.is_admin ? "/admin" : "/chat"} replace /> : <Landing />} />
       <Route path="/auth" element={user ? <Navigate to={user.is_admin ? "/admin" : "/chat"} replace /> : <Auth />} />
       <Route path="/onboarding" element={<Onboarding />} />
+      {/* Public content pages */}
+      <Route path="/about" element={<About />} />
+      <Route path="/contact" element={<Contact />} />
+      <Route path="/faq" element={<FAQ />} />
+      <Route path="/privacy" element={<Privacy />} />
+      <Route path="/terms" element={<Terms />} />
+      <Route path="/safety" element={<Safety />} />
       <Route path="/chat" element={<Protected><Chat /></Protected>} />
       <Route path="/wellness" element={<Protected><Wellness /></Protected>} />
       <Route path="/payment/success" element={<Protected><PaymentSuccess /></Protected>} />

@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useEffect, useState, useCallback } from "react";
 import { api } from "../lib/api";
+import { useVisibilityRefetch } from "../hooks/use-visibility-refetch";
 
 const AuthContext = createContext(null);
 
@@ -54,6 +55,19 @@ export function AuthProvider({ children }) {
     setUser(data);
     return data;
   };
+
+  // Keep the user (and Plus/subscription status) fresh when the tab regains
+  // focus — e.g. after returning from a PayPal/Stripe checkout in another tab.
+  const silentRefresh = useCallback(async () => {
+    if (!localStorage.getItem("campion_token")) return;
+    try {
+      const { data } = await api.get("/auth/me");
+      setUser(data);
+    } catch {
+      /* best-effort */
+    }
+  }, []);
+  useVisibilityRefetch(silentRefresh, { enabled: !!user });
 
   return (
     <AuthContext.Provider value={{ user, setUser, loading, login, register, logout, refresh }}>

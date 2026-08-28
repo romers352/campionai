@@ -18,7 +18,7 @@ from models import (
     RegisterInput, LoginInput, OnboardingInput, ProfileUpdate, ChatInput,
     SessionCreate, MemoryUpdate, ModelRouteConfig, ProfessionalInput,
     ProviderSettings, PrivateModeInput, VoiceSettingsInput, TTSInput,
-    CheckoutInput, FoodInput, EventInput, PlanItemToggle, PaypalActivate, GoogleSessionInput, now_iso, new_id,
+    CheckoutInput, FoodInput, EventInput, PlanItemToggle, PaypalActivate, GoogleSessionInput, ContactInput, now_iso, new_id,
 )
 from auth import (
     hash_password, verify_password, create_token,
@@ -905,6 +905,22 @@ async def payments_checkout(inp: CheckoutInput, request: Request, user=Depends(g
         "created_at": now_iso(), "updated_at": now_iso(),
     })
     return {"checkout_url": session.url, "session_id": session.session_id}
+
+
+@api.post("/contact")
+async def submit_contact(inp: ContactInput):
+    doc = {
+        "id": new_id(),
+        "name": inp.name.strip()[:200],
+        "email": str(inp.email),
+        "subject": (inp.subject or "").strip()[:300],
+        "message": inp.message.strip()[:5000],
+        "created_at": now_iso(),
+        "handled": False,
+    }
+    await db.contact_messages.insert_one(doc)
+    logger.info(f"contact message received from {doc['email']}")
+    return {"ok": True, "message": "Thanks for reaching out — we'll get back to you soon."}
 
 
 @api.get("/donors/top")

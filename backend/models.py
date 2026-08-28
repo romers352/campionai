@@ -151,3 +151,11 @@ class PlanItemToggle(BaseModel):
 class PaypalActivate(BaseModel):
     subscription_id: str
     plan_key: str  # "monthly" | "yearly"
+
+
+# ---------- Contact ----------
+class ContactInput(BaseModel):
+    name: str
+    email: EmailStr
+    subject: Optional[str] = None
+    message: str

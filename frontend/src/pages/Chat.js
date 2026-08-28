@@ -12,9 +12,10 @@ import MemoryDrawer from "@/components/MemoryDrawer";
 import SettingsDialog from "@/components/SettingsDialog";
 import EscalationCard from "@/components/EscalationCard";
 import CheckinBanner from "@/components/CheckinBanner";
+import { useVisibilityRefetch } from "@/hooks/use-visibility-refetch";
 import {
   Plus, ArrowUp, Brain, Settings, LifeBuoy, Menu, Lock,
-  MessageSquare, Trash2, Shield, Mic, Volume2, VolumeX, Sparkles, Paperclip, X,
+  MessageSquare, Trash2, Shield, Mic, Volume2, VolumeX, Sparkles, Paperclip, X, Loader2,
 } from "lucide-react";
 
 export default function Chat() {
@@ -56,6 +57,11 @@ export default function Chat() {
     api.get("/checkin").then(({ data }) => { if (data.due) setCheckin(data.message); }).catch(() => {});
     api.get("/voice/status").then(({ data }) => setVoiceEnabled(!!data.enabled)).catch(() => {});
   }, []);
+  // Refresh sessions + check-in when returning to the tab.
+  useVisibilityRefetch(() => {
+    loadSessions();
+    api.get("/checkin").then(({ data }) => { if (data.due) setCheckin(data.message); }).catch(() => {});
+  });
   useEffect(() => {
     if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
   }, [messages, thinking]);

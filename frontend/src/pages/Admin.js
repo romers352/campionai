@@ -2,6 +2,7 @@ import React, { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { api } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
+import { useVisibilityRefetch } from "@/hooks/use-visibility-refetch";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -50,6 +51,9 @@ export default function Admin() {
   };
 
   useEffect(() => { loadAll(); }, []);
+
+  // Keep admin dashboards (stats, professionals, safety events) fresh on refocus.
+  useVisibilityRefetch(() => { loadAll().catch(() => {}); });
 
   const saveVoice = async () => {
     await api.put("/admin/voice-settings", { enabled: voice.enabled, voice_id: voice.voice_id, fish_audio_api_key: fishKey || undefined });

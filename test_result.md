@@ -104,6 +104,20 @@
 user_problem_statement: "Add PayPal (LIVE) subscription integration for CampionAI Plus — credentials, live plans, and a webhook endpoint at /api/webhook/paypal handling the 6 subscription events."
 
 backend:
+  - task: "POST /api/contact (public contact form)"
+    implemented: true
+    working: true
+    file: "backend/server.py, backend/models.py"
+    stuck_count: 0
+    priority: "medium"
+    needs_retesting: false
+    status_history:
+        -working: "NA"
+        -agent: "main"
+        -comment: "New PUBLIC (no-auth) endpoint. Accepts {name, email, subject?, message}, validates email via EmailStr, stores to contact_messages collection with UUID id + created_at, returns {ok:true, message}. Test: (1) valid payload returns 200 ok:true; (2) invalid email returns 422; (3) missing required fields (name/message) returns 422; (4) no auth header still works (public)."
+        -working: true
+        -agent: "testing"
+        -comment: "VERIFIED: (1) Valid payload {name, email, subject, message} returns HTTP 200 with {ok:true, message:'Thanks for reaching out — we'll get back to you soon.'}. (2) Works WITHOUT Authorization header (public endpoint confirmed). (3) Invalid email 'not-an-email' returns HTTP 422 with validation error (NOT 500). (4) Missing required field 'name' returns 422. (5) Missing required field 'message' returns 422. (6) Repeated submissions (3 consecutive calls) work without crashing - documents stored successfully. (7) NO-REGRESSION: Email/password auth fully working - login returns 200 with token, /api/auth/me returns 200, register new user returns 200 with token, duplicate email returns 400 'Email already registered'. Test file: /app/backend_test.py"
   - task: "PayPal LIVE credentials + plan config in .env"
     implemented: true
     working: true
@@ -164,7 +178,7 @@ backend:
 metadata:
   created_by: "main_agent"
   version: "1.4"
-  test_sequence: 4
+  test_sequence: 5
   run_ui: false
 
 test_plan:
@@ -172,6 +186,10 @@ test_plan:
   stuck_tasks: []
   test_all: false
   test_priority: "high_first"
+
+agent_communication:
+    -agent: "main"
+    -message: "Added a new PUBLIC endpoint POST /api/contact for the new Contact page. Please test BACKEND ONLY, focused on this endpoint: (1) valid {name,email,message} returns 200 with ok:true; (2) invalid email -> 422; (3) missing name or message -> 422; (4) works with NO auth header (it's public). Also do a quick no-regression sanity on existing auth login. Do NOT test frontend. Do NOT create real PayPal subscriptions."
 
 agent_communication:
     -agent: "main"
@@ -185,6 +203,11 @@ agent_communication:
 
 agent_communication:
     -agent: "testing"
+
+agent_communication:
+    -agent: "testing"
+    -message: "✅ ALL BACKEND TESTS PASSED - CONTACT FORM + NO-REGRESSION VERIFIED. (1) POST /api/contact with valid payload returns 200 with {ok:true, message}. (2) Works WITHOUT Authorization header (public endpoint confirmed). (3) Invalid email returns 422 validation error (NOT 500). (4) Missing required fields (name/message) return 422 (NOT 500). (5) Repeated submissions work without crashing - documents stored successfully. (6) NO-REGRESSION CONFIRMED: Email/password auth fully working - login returns 200 with token, /api/auth/me returns 200, register new user returns 200 with token, duplicate email returns 400 'Email already registered'. (7) Google OAuth and PayPal integration still working (no regression). Test file: /app/backend_test.py. All requirements from review_request met. ALL BACKEND FEATURES WORKING CORRECTLY - READY FOR USER SUMMARY."
+
     -message: "✅ ALL BACKEND TESTS PASSED - GOOGLE SIGN-IN + NO-REGRESSION VERIFIED. (1) POST /api/auth/google/session with bogus session_id returns 401 'Could not verify Google sign-in' (NOT 500). (2) Missing/empty session_id returns 422/401 validation errors (NOT 500 crash). (3) Malformed body returns 422 (NOT 500). (4) NO-REGRESSION CONFIRMED: Email/password auth fully working - login returns 200 with token, /api/auth/me returns 200, register new user returns 200 with token, duplicate email returns 400 'Email already registered'. (5) PayPal integration still working (no regression). Test file: /app/backend_test.py. All requirements from review_request met."
 
 #====================================================================================================
