@@ -1,6 +1,6 @@
-import React, { useEffect, useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { api } from "@/lib/api";
+import { api, API } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
 import { useVisibilityRefetch } from "@/hooks/use-visibility-refetch";
 import { Button } from "@/components/ui/button";
@@ -11,9 +11,10 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { toast } from "@/components/ui/sonner";
+import AccountMenu from "@/components/AccountMenu";
 import {
   HeartHandshake, ArrowLeft, Users, MessageSquare, Brain, ShieldAlert,
-  Cpu, Trash2, Plus, Search, Loader2, CheckCircle2, Volume2, Mail, Smartphone,
+  Cpu, Trash2, Plus, Search, Loader2, CheckCircle2, Volume2, Mail, Smartphone, Stethoscope, Wallet,
 } from "lucide-react";
 
 const PROVIDERS = [
@@ -33,24 +34,72 @@ export default function Admin() {
   const [orModels, setOrModels] = useState([]);
   const [orSearch, setOrSearch] = useState("");
   const [loadingModels, setLoadingModels] = useState(false);
-  const [pros, setPros] = useState([]);
   const [events, setEvents] = useState([]);
-  const [newPro, setNewPro] = useState({ name: "", credentials: "", specialty: "", contact: "", availability: "on-call" });
+  const [docs, setDocs] = useState([]);
+  const [docFilter, setDocFilter] = useState("pending");
+  const [pendingCount, setPendingCount] = useState(0);
+  const [reasons, setReasons] = useState({});
+  const [payouts, setPayouts] = useState([]);
+  const [consultSettings, setConsultSettings] = useState({});
   const [voice, setVoice] = useState({ enabled: true, voice_id: "", key_set: false });
   const [fishKey, setFishKey] = useState("");
   const [integrations, setIntegrations] = useState({});
 
   const loadAll = async () => {
-    const [s, r, pv, p, e, v, i] = await Promise.all([
+    const [s, r, pv, e, v, i, po, cs] = await Promise.all([
       api.get("/admin/stats"), api.get("/admin/model-config"), api.get("/admin/provider-settings"),
-      api.get("/admin/professionals"), api.get("/admin/safety-events"),
-      api.get("/admin/voice-settings"), api.get("/admin/integrations"),
+      api.get("/admin/safety-events"), api.get("/admin/voice-settings"), api.get("/admin/integrations"),
+      api.get("/admin/payouts"), api.get("/admin/consult-settings"),
     ]);
-    setStats(s.data); setRoutes(r.data); setProvider(pv.data); setPros(p.data); setEvents(e.data);
-    setVoice(v.data); setIntegrations(i.data);
+    setStats(s.data); setRoutes(r.data); setProvider(pv.data); setEvents(e.data);
+    setVoice(v.data); setIntegrations(i.data); setPayouts(po.data); setConsultSettings(cs.data);
   };
 
+  const loadDoctors = useCallback(async () => {
+    const [list, pending] = await Promise.all([
+      api.get("/admin/doctors", { params: { status: docFilter || undefined } }),
+      api.get("/admin/doctors", { params: { status: "pending" } }),
+    ]);
+    setDocs(list.data);
+    setPendingCount(pending.data.length);
+  }, [docFilter]);
+
   useEffect(() => { loadAll(); }, []);
+  useEffect(() => { loadDoctors(); }, [loadDoctors]);
+
+  // Licence documents are served through the authenticated file route.
+  const fileUrl = (path) => `${API}/files/${path}?auth=${localStorage.getItem("campion_token")}`;
+
+  const setDoctorStatus = async (id, status) => {
+    try {
+      await api.put(`/admin/doctors/${id}/status`, { status, reason: reasons[id] || undefined });
+      toast.success(`Doctor ${status}`);
+      setReasons((r) => ({ ...r, [id]: "" }));
+      loadDoctors();
+      loadAll();
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Couldn't update");
+    }
+  };
+
+  const saveConsultSettings = async () => {
+    try {
+      const { data } = await api.put("/admin/consult-settings", {
+        commission_pct: parseFloat(consultSettings.commission_pct) || 0,
+        free_volunteer_sessions_per_month: parseInt(consultSettings.free_volunteer_sessions_per_month, 10) || 0,
+      });
+      setConsultSettings(data);
+      toast.success("Consult settings saved");
+    } catch (e) { toast.error(e?.response?.data?.detail || "Couldn't save"); }
+  };
+
+  const settle = async (doctor_id) => {
+    try {
+      const { data } = await api.post("/admin/payouts/settle", { doctor_id });
+      toast.success(`Marked $${data.amount} settled`);
+      loadAll();
+    } catch (e) { toast.error(e?.response?.data?.detail || "Couldn't settle"); }
+  };
 
   // Keep admin dashboards (stats, professionals, safety events) fresh on refocus.
   useVisibilityRefetch(() => { loadAll().catch(() => {}); });
@@ -89,19 +138,6 @@ export default function Admin() {
     }
   };
 
-  const addPro = async () => {
-    if (!newPro.name || !newPro.credentials) return toast.error("Name and credentials required");
-    const { data } = await api.post("/admin/professionals", { ...newPro, verified: true });
-    setPros((p) => [data, ...p]);
-    setNewPro({ name: "", credentials: "", specialty: "", contact: "", availability: "on-call" });
-    toast.success("Professional added");
-  };
-
-  const delPro = async (id) => {
-    await api.delete(`/admin/professionals/${id}`);
-    setPros((p) => p.filter((x) => x.id !== id));
-  };
-
   const resolveEvent = async (id) => {
     await api.put(`/admin/safety-events/${id}/resolve`);
     setEvents((ev) => ev.map((e) => e.id === id ? { ...e, resolved: true } : e));
@@ -114,6 +150,7 @@ export default function Admin() {
     { icon: Users, label: "Users", value: stats.users },
     { icon: MessageSquare, label: "Messages", value: stats.messages },
     { icon: Brain, label: "Memories", value: stats.memories },
+    { icon: Stethoscope, label: "Verified doctors", value: stats.doctors },
     { icon: ShieldAlert, label: "Open safety events", value: stats.open_safety_events, alert: stats.open_safety_events > 0 },
   ] : [];
 
@@ -131,7 +168,10 @@ export default function Admin() {
             <span className="font-display font-extrabold">CampionAI · Admin</span>
           </div>
         </div>
-        <Badge variant="secondary" className="rounded-full">{user?.email}</Badge>
+        <div className="flex items-center gap-3">
+          <Badge variant="secondary" className="rounded-full hidden sm:inline-flex">{user?.email}</Badge>
+          <AccountMenu />
+        </div>
       </header>
 
       <div className="max-w-6xl mx-auto px-6 py-8">
@@ -148,7 +188,8 @@ export default function Admin() {
         <Tabs defaultValue="models">
           <TabsList className="rounded-full">
             <TabsTrigger value="models" className="rounded-full" data-testid="admin-tab-models">Models & routing</TabsTrigger>
-            <TabsTrigger value="professionals" className="rounded-full" data-testid="admin-tab-pros">Professionals</TabsTrigger>
+            <TabsTrigger value="doctors" className="rounded-full" data-testid="admin-tab-doctors">Doctors</TabsTrigger>
+            <TabsTrigger value="payouts" className="rounded-full" data-testid="admin-tab-payouts">Payouts</TabsTrigger>
             <TabsTrigger value="safety" className="rounded-full" data-testid="admin-tab-safety">Safety events</TabsTrigger>
             <TabsTrigger value="voice" className="rounded-full" data-testid="admin-tab-voice">Voice & alerts</TabsTrigger>
           </TabsList>
@@ -216,33 +257,122 @@ export default function Admin() {
             </div>
           </TabsContent>
 
-          {/* PROFESSIONALS */}
-          <TabsContent value="professionals" className="mt-6 space-y-5">
-            <div className="rounded-none border border-border bg-card p-6">
-              <h3 className="font-display font-bold mb-4 flex items-center gap-2"><Plus className="h-4 w-4 text-primary" /> Add verified professional</h3>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                {[["name", "Full name"], ["credentials", "Credentials (e.g. PsyD)"], ["specialty", "Specialty"], ["contact", "Contact"]].map(([k, l]) => (
-                  <Input key={k} className="rounded-full h-10" placeholder={l} value={newPro[k]} data-testid={`pro-${k}-input`}
-                    onChange={(e) => setNewPro((p) => ({ ...p, [k]: e.target.value }))} />
-                ))}
-              </div>
-              <Button className="rounded-full mt-4" onClick={addPro} data-testid="add-pro-button">Add professional</Button>
+          {/* DOCTORS */}
+          <TabsContent value="doctors" className="mt-6 space-y-5">
+            <div className="flex gap-2">
+              {[["pending", "Pending"], ["verified", "Verified"], ["rejected", "Rejected"], ["suspended", "Suspended"], ["", "All"]].map(([v, l]) => (
+                <Button key={v || "all"} variant={docFilter === v ? "default" : "outline"} className="rounded-full h-9"
+                  onClick={() => setDocFilter(v)} data-testid={`doc-filter-${v || "all"}`}>
+                  {l}{v === "pending" && pendingCount > 0 ? ` (${pendingCount})` : ""}
+                </Button>
+              ))}
             </div>
-            <div className="space-y-2">
-              {pros.map((p) => (
-                <div key={p.id} className="flex items-center justify-between rounded-none border border-border bg-card p-4" data-testid={`pro-item-${p.id}`}>
-                  <div className="flex items-center gap-3">
-                    <CheckCircle2 className="h-5 w-5 text-primary" />
-                    <div>
-                      <p className="text-sm font-medium">{p.name} <span className="text-xs text-muted-foreground">· {p.credentials}</span></p>
-                      <p className="text-xs text-muted-foreground">{p.specialty} · {p.contact}</p>
+
+            {docs.length === 0 && <p className="text-sm text-muted-foreground py-10 text-center" data-testid="no-doctors">No doctors here.</p>}
+
+            <div className="space-y-3">
+              {docs.map((d) => (
+                <div key={d.id} className="rounded-none border border-border bg-card p-5" data-testid={`admin-doctor-${d.id}`}>
+                  <div className="flex items-start justify-between gap-4 mb-3">
+                    <div className="min-w-0">
+                      <p className="font-medium">
+                        {d.name} <span className="text-xs text-muted-foreground">· {d.credentials}</span>
+                        {d.is_volunteer && <span className="ml-2 text-[10px] tracking-[0.15em] uppercase border border-border px-2 py-0.5 rounded-full text-muted-foreground">Volunteer</span>}
+                      </p>
+                      <p className="text-xs text-muted-foreground mt-1">
+                        {d.email} · {d.country} · {(d.languages || []).join(", ")} · {d.session_price > 0 ? `$${d.session_price}/session` : "Free"}
+                      </p>
+                      <p className="text-xs text-muted-foreground mt-1">
+                        Licence <span className="font-mono-data">{d.licence_number}</span> ·
+                        Identity <span className={`font-mono-data ${d.kyc?.status === "approved" ? "text-primary" : d.kyc?.status === "declined" ? "text-escalation" : ""}`}>
+                          {d.kyc?.status || "not started"}
+                        </span>
+                      </p>
+                      {d.bio && <p className="text-sm text-muted-foreground mt-2 line-clamp-2">{d.bio}</p>}
+                      {d.review_reason && <p className="text-xs text-muted-foreground mt-2 border-l-2 border-border pl-3">{d.review_reason}</p>}
                     </div>
+                    <span className={`text-[10px] tracking-[0.15em] uppercase px-2 py-1 border shrink-0 ${d.status === "verified" ? "border-primary text-primary" : d.status === "pending" ? "border-border text-muted-foreground" : "border-escalation/40 text-escalation"}`}>
+                      {d.status}
+                    </span>
                   </div>
-                  <button onClick={() => delPro(p.id)} className="text-muted-foreground hover:text-escalation transition-colors" data-testid={`del-pro-${p.id}`}>
-                    <Trash2 className="h-4 w-4" />
-                  </button>
+
+                  <div className="flex flex-wrap items-center gap-2">
+                    {d.licence_doc_path && (
+                      <a href={fileUrl(d.licence_doc_path)} target="_blank" rel="noopener noreferrer"
+                        className="text-xs underline text-muted-foreground hover:text-foreground" data-testid={`licence-${d.id}`}>
+                        View licence document
+                      </a>
+                    )}
+                    <div className="flex-1" />
+                    <Input className="rounded-full h-9 w-56" placeholder="Reason (required to override)"
+                      value={reasons[d.id] || ""} data-testid={`reason-${d.id}`}
+                      onChange={(e) => setReasons((r) => ({ ...r, [d.id]: e.target.value }))} />
+                    {d.status !== "verified" && (
+                      <Button className="rounded-full h-9" onClick={() => setDoctorStatus(d.id, "verified")} data-testid={`approve-${d.id}`}>
+                        Approve
+                      </Button>
+                    )}
+                    {d.status !== "rejected" && (
+                      <Button variant="outline" className="rounded-full h-9 border-escalation/40 text-escalation hover:bg-escalation/10"
+                        onClick={() => setDoctorStatus(d.id, "rejected")} data-testid={`reject-${d.id}`}>
+                        Reject
+                      </Button>
+                    )}
+                    {d.status === "verified" && (
+                      <Button variant="outline" className="rounded-full h-9 border-border"
+                        onClick={() => setDoctorStatus(d.id, "suspended")} data-testid={`suspend-${d.id}`}>
+                        Suspend
+                      </Button>
+                    )}
+                  </div>
                 </div>
               ))}
+            </div>
+          </TabsContent>
+
+          {/* PAYOUTS */}
+          <TabsContent value="payouts" className="mt-6 space-y-5">
+            <div className="rounded-none border border-border bg-card p-6">
+              <h3 className="font-display font-bold mb-1 flex items-center gap-2"><Wallet className="h-4 w-4 text-primary" /> Consult settings</h3>
+              <p className="text-sm text-muted-foreground mb-5">Commission is taken from every paid session. The free cap applies to volunteer sessions only — crisis sessions are never counted.</p>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <div>
+                  <Label className="text-xs text-muted-foreground">Commission %</Label>
+                  <Input type="number" min="0" max="100" step="1" className="rounded-full h-10 mt-1.5" data-testid="commission-input"
+                    value={consultSettings.commission_pct ?? ""}
+                    onChange={(e) => setConsultSettings((s) => ({ ...s, commission_pct: e.target.value }))} />
+                </div>
+                <div>
+                  <Label className="text-xs text-muted-foreground">Free volunteer sessions / month</Label>
+                  <Input type="number" min="0" max="100" step="1" className="rounded-full h-10 mt-1.5" data-testid="freecap-input"
+                    value={consultSettings.free_volunteer_sessions_per_month ?? ""}
+                    onChange={(e) => setConsultSettings((s) => ({ ...s, free_volunteer_sessions_per_month: e.target.value }))} />
+                </div>
+              </div>
+              <Button className="rounded-full mt-4" onClick={saveConsultSettings} data-testid="save-consult-settings">Save</Button>
+            </div>
+
+            <div className="rounded-none border border-border bg-card p-6">
+              <h3 className="font-display font-bold mb-1">Outstanding payouts</h3>
+              <p className="text-sm text-muted-foreground mb-5">Send the money off-platform, then mark it settled here.</p>
+              {payouts.length === 0 ? (
+                <p className="text-sm text-muted-foreground py-6 text-center" data-testid="no-payouts">Nothing outstanding.</p>
+              ) : (
+                <div className="space-y-2" data-testid="payouts-list">
+                  {payouts.map((p) => (
+                    <div key={p.doctor_id} className="flex items-center gap-4 border border-border p-4" data-testid={`payout-${p.doctor_id}`}>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-medium truncate">{p.name}</p>
+                        <p className="text-xs text-muted-foreground truncate">{p.email} · {p.country} · {p.sessions} sessions · ${p.commission} commission</p>
+                      </div>
+                      <span className="font-display font-light text-2xl shrink-0">${p.owed}</span>
+                      <Button className="rounded-full shrink-0" onClick={() => settle(p.doctor_id)} data-testid={`settle-${p.doctor_id}`}>
+                        Mark settled
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           </TabsContent>
 

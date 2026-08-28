@@ -1,10 +1,33 @@
-import React from "react";
+import React, { useState } from "react";
 import { motion } from "framer-motion";
-import { ShieldCheck, Phone, UserCheck, HeartHandshake } from "lucide-react";
+import { useNavigate } from "react-router-dom";
+import { api } from "@/lib/api";
+import { Button } from "@/components/ui/button";
+import { toast } from "@/components/ui/sonner";
+import { ShieldCheck, Phone, UserCheck, HeartHandshake, Video, Loader2 } from "lucide-react";
 
 export default function EscalationCard({ escalation }) {
+  const navigate = useNavigate();
+  const [starting, setStarting] = useState(false);
   if (!escalation) return null;
-  const { hotlines = [], trusted_contact, professional, message, trusted_contact_notified, professional_notified } = escalation;
+  const {
+    hotlines = [], trusted_contact, professional, message,
+    trusted_contact_notified, professional_notified, consult_offer,
+  } = escalation;
+
+  // A crisis consult is free and uncapped — never gated on billing or the monthly limit.
+  const startConsult = async () => {
+    setStarting(true);
+    try {
+      const { data } = await api.post("/consults/request", {
+        doctor_id: consult_offer.doctor_id, mode: "video", note: "Crisis support", crisis: true,
+      });
+      navigate(`/consult/${data.session.id}`);
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Couldn't connect you — please use a hotline above.");
+      setStarting(false);
+    }
+  };
   return (
     <motion.div
       initial={{ opacity: 0, y: 12 }}
@@ -57,6 +80,24 @@ export default function EscalationCard({ escalation }) {
           </div>
         )}
       </div>
+
+      {consult_offer && (
+        <div className="mt-5 border border-escalation/30 bg-background p-5" data-testid="crisis-consult-offer">
+          <div className="flex items-start gap-3 mb-4">
+            <Video className="h-4 w-4 text-escalation mt-0.5 shrink-0" strokeWidth={1.5} />
+            <div>
+              <p className="text-sm font-medium leading-tight">Talk to {consult_offer.doctor_name} now</p>
+              <p className="text-[11px] text-muted-foreground mt-0.5">
+                Free, right now{consult_offer.online_now ? " — they're online" : " — we'll ask them to join"}.
+              </p>
+            </div>
+          </div>
+          <Button className="w-full rounded-full bg-escalation hover:bg-escalation/90 gap-2"
+            onClick={startConsult} disabled={starting} data-testid="start-crisis-consult">
+            {starting ? <Loader2 className="h-4 w-4 animate-spin" /> : <><Video className="h-4 w-4" /> Connect me</>}
+          </Button>
+        </div>
+      )}
     </motion.div>
   );
 }

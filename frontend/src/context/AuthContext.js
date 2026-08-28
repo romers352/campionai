@@ -45,7 +45,10 @@ export function AuthProvider({ children }) {
     return data.user;
   };
 
-  const logout = () => {
+  const logout = async () => {
+    // Revoke server-side first so the token dies even if it leaked into a log or URL.
+    // A failed call (offline, deleted account) must never trap the user in a signed-in UI.
+    try { await api.post("/auth/logout"); } catch { /* clear locally regardless */ }
     localStorage.removeItem("campion_token");
     setUser(null);
   };

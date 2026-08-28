@@ -9,7 +9,8 @@ import { Input } from "@/components/ui/input";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Checkbox } from "@/components/ui/checkbox";
 import { toast } from "@/components/ui/sonner";
-import PayPalSubscribe, { paypalConfigured } from "@/components/PayPalSubscribe";
+import PayPalSubscribe, { PayPalDonate } from "@/components/PayPalSubscribe";
+import AccountMenu from "@/components/AccountMenu";
 import {
   ArrowLeft, Sparkles, Check, RefreshCw, Utensils, CalendarClock, Plus, Trash2,
   Wind, Flower2, Activity, Brain, HeartHandshake, Loader2, Heart,
@@ -38,20 +39,34 @@ const PLAN_PERKS = [
   "Cancel anytime — your data stays yours",
 ];
 
-function Paywall({ status, onTrial, onCheckout, onDonate, onActivated, busy }) {
+function Paywall({ status, onTrial, onActivated, busy }) {
+  const [pricing, setPricing] = useState(null);
   const [donors, setDonors] = useState([]);
   const [custom, setCustom] = useState("");
   const [anon, setAnon] = useState(false);
-  useEffect(() => { api.get("/donors/top").then(({ data }) => setDonors(data)).catch(() => {}); }, []);
-  const donateCustom = () => {
+  const [donateAmount, setDonateAmount] = useState(null);
+
+  const loadDonors = () => api.get("/donors/top").then(({ data }) => setDonors(data)).catch(() => {});
+  useEffect(() => {
+    api.get("/pricing").then(({ data }) => setPricing(data)).catch(() => toast.error("Couldn't load pricing"));
+    loadDonors();
+  }, []);
+
+  const pickCustom = () => {
     const amt = parseFloat(custom);
     if (!amt || amt < 1) { toast.error("Enter an amount of at least $1"); return; }
-    onCheckout("donate_custom", { amount: amt, anonymous: anon });
+    setDonateAmount(amt);
   };
-  const plans = [
-    { id: "plus_monthly", price: "$9", per: "/mo", note: "Billed monthly" },
-    { id: "plus_yearly", price: "$86.40", per: "/yr", note: "Just $7.20/mo · billed yearly", featured: true, save: "Save 20%" },
-  ];
+
+  const afterDonation = () => { setDonateAmount(null); setCustom(""); loadDonors(); };
+
+  if (!pricing) {
+    return <div className="relative z-10 flex justify-center py-32"><Loader2 className="h-6 w-6 animate-spin text-primary" /></div>;
+  }
+
+  const clientId = pricing.paypal_client_id;
+  const plansReady = clientId && pricing.plans.some((p) => p.paypal_plan_id);
+
   return (
     <div className="relative z-10 max-w-3xl mx-auto px-6 py-16 md:py-20">
       <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.6, ease: [0.16, 1, 0.3, 1] }}>
@@ -79,13 +94,13 @@ function Paywall({ status, onTrial, onCheckout, onDonate, onActivated, busy }) {
         </div>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-5 mb-6">
-          {plans.map((p) => (
+          {pricing.plans.map((p) => (
             <div key={p.id}
               className={`relative p-8 rounded-2xl transition-colors ${p.featured ? "border border-foreground bg-white/[0.04] ambient-shadow-lg" : "border border-border bg-card/40 hover:border-foreground/40"}`}
               data-testid={`plan-${p.id}`}>
               {p.save && <span className="absolute -top-3 left-8 bg-primary text-primary-foreground text-[10px] tracking-[0.15em] uppercase px-3 py-1 rounded-full">{p.save}</span>}
               <div className="flex items-end gap-1.5 mb-1">
-                <span className="font-display font-light text-5xl leading-none">{p.price}</span>
+                <span className="font-display font-light text-5xl leading-none">${p.amount}</span>
                 <span className="text-muted-foreground mb-1.5">{p.per}</span>
               </div>
               <p className="text-xs text-muted-foreground mb-6">{p.note}</p>
@@ -98,33 +113,25 @@ function Paywall({ status, onTrial, onCheckout, onDonate, onActivated, busy }) {
                   ))}
                 </ul>
               )}
-              <Button className={`w-full rounded-full ${p.featured ? "bg-primary text-primary-foreground hover:bg-zinc-200" : "bg-transparent border border-border text-foreground hover:bg-accent"}`}
-                onClick={() => onCheckout(p.id)} disabled={busy} data-testid={`subscribe-${p.id}`}>
-                {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : `Choose ${p.featured ? "yearly" : "monthly"}`}
-              </Button>
+              {p.paypal_plan_id ? (
+                <PayPalSubscribe
+                  clientId={clientId}
+                  planId={p.paypal_plan_id}
+                  planKey={p.id === "plus_yearly" ? "yearly" : "monthly"}
+                  onActivated={onActivated}
+                />
+              ) : (
+                <p className="text-xs text-muted-foreground" data-testid={`plan-unavailable-${p.id}`}>
+                  Card payments aren't set up yet — check back soon.
+                </p>
+              )}
             </div>
           ))}
         </div>
-        <p className="text-center text-xs text-muted-foreground mb-14">Every plan starts with a 14-day free trial. No charge today.</p>
-
-        {paypalConfigured() && (
-          <div className="mb-14">
-            <div className="flex items-center gap-4 mb-6">
-              <div className="h-px flex-1 bg-border" />
-              <span className="text-[10px] tracking-[0.3em] uppercase text-muted-foreground">Or subscribe with PayPal</span>
-              <div className="h-px flex-1 bg-border" />
-            </div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <div className="border border-border rounded-2xl bg-card/40 p-5">
-                <p className="text-sm text-muted-foreground mb-4">Monthly · $9/mo</p>
-                <PayPalSubscribe planKey="monthly" onActivated={onActivated} />
-              </div>
-              <div className="border border-border rounded-2xl bg-card/40 p-5">
-                <p className="text-sm text-muted-foreground mb-4">Yearly · $86.40/yr</p>
-                <PayPalSubscribe planKey="yearly" onActivated={onActivated} />
-              </div>
-            </div>
-          </div>
+        {plansReady && (
+          <p className="text-center text-xs text-muted-foreground mb-14">
+            Subscriptions renew automatically. Cancel anytime from Billing.
+          </p>
         )}
 
         {!status.trial_used && (
@@ -133,11 +140,11 @@ function Paywall({ status, onTrial, onCheckout, onDonate, onActivated, busy }) {
               <Sparkles className="h-5 w-5 text-foreground/70 mt-0.5 shrink-0" strokeWidth={1.5} />
               <div>
                 <p className="font-medium">Not ready to commit?</p>
-                <p className="text-sm text-muted-foreground">Try everything free for 14 days — no card needed.</p>
+                <p className="text-sm text-muted-foreground">Try everything free for {pricing.trial_days} days. No card needed.</p>
               </div>
             </div>
-            <Button variant="outline" className="rounded-full border-foreground/30 hover:bg-accent shrink-0" onClick={onTrial} disabled={busy} data-testid="start-trial-button">
-              {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : "Start 14-day free trial"}
+            <Button className="rounded-full bg-primary text-primary-foreground hover:bg-zinc-200 shrink-0 px-7" onClick={onTrial} disabled={busy} data-testid="start-trial-button">
+              {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : `Start ${pricing.trial_days}-day free trial`}
             </Button>
           </div>
         )}
@@ -150,9 +157,11 @@ function Paywall({ status, onTrial, onCheckout, onDonate, onActivated, busy }) {
           </p>
 
           <div className="flex flex-wrap gap-2 mb-4">
-            {[["donate_5", "$5"], ["donate_15", "$15"], ["donate_30", "$30"]].map(([id, label]) => (
-              <Button key={id} variant="outline" className="rounded-full border-border hover:border-foreground/40 hover:bg-accent px-5" onClick={() => onDonate(id)} disabled={busy} data-testid={`donate-${id}`}>
-                {label}
+            {pricing.donations.map((d) => (
+              <Button key={d.id} variant="outline"
+                className={`rounded-full px-5 ${donateAmount === d.amount ? "border-foreground bg-accent" : "border-border hover:border-foreground/40 hover:bg-accent"}`}
+                onClick={() => { setCustom(""); setDonateAmount(d.amount); }} data-testid={`donate-${d.id}`}>
+                ${d.amount}
               </Button>
             ))}
           </div>
@@ -161,16 +170,27 @@ function Paywall({ status, onTrial, onCheckout, onDonate, onActivated, busy }) {
             <div className="relative flex-1">
               <span className="absolute left-4 top-1/2 -translate-y-1/2 text-muted-foreground">$</span>
               <Input type="number" min="1" step="1" className="rounded-full h-11 pl-7" placeholder="Custom amount" value={custom}
-                onChange={(e) => setCustom(e.target.value)} onKeyDown={(e) => e.key === "Enter" && donateCustom()} data-testid="custom-donate-input" />
+                onChange={(e) => setCustom(e.target.value)} onKeyDown={(e) => e.key === "Enter" && pickCustom()} data-testid="custom-donate-input" />
             </div>
-            <Button className="rounded-full bg-primary text-primary-foreground hover:bg-zinc-200 px-6" onClick={donateCustom} disabled={busy} data-testid="custom-donate-button">
-              {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : "Donate"}
+            <Button className="rounded-full bg-primary text-primary-foreground hover:bg-zinc-200 px-6" onClick={pickCustom} data-testid="custom-donate-button">
+              Use amount
             </Button>
           </div>
-          <label className="flex items-center gap-2 text-sm text-muted-foreground cursor-pointer mb-12">
+          <label className="flex items-center gap-2 text-sm text-muted-foreground cursor-pointer mb-5">
             <Checkbox checked={anon} onCheckedChange={(v) => setAnon(!!v)} data-testid="donate-anonymous-checkbox" />
             Donate anonymously (won't appear on the supporters list)
           </label>
+
+          {donateAmount ? (
+            <div className="max-w-sm mb-12" data-testid="donate-paypal-wrap">
+              <p className="text-sm text-muted-foreground mb-3">Donating <span className="text-foreground font-medium">${donateAmount.toFixed(2)}</span></p>
+              {clientId
+                ? <PayPalDonate clientId={clientId} amount={donateAmount} anonymous={anon} onDone={afterDonation} />
+                : <p className="text-xs text-muted-foreground">Donations aren't set up yet.</p>}
+            </div>
+          ) : (
+            <p className="text-xs text-muted-foreground mb-12">Pick an amount above to continue.</p>
+          )}
 
           {donors.length > 0 && (
             <div>
@@ -277,16 +297,9 @@ export default function Wellness() {
       await refresh();
       const s = await loadStatus();
       if (s.active) await loadPlusData();
-      toast.success("Your 14-day trial is on. Let's build your first plan.");
+      toast.success("Your free trial is on. Let's build your first plan.");
     } catch (e) { toast.error(e?.response?.data?.detail || "Could not start trial"); }
     finally { setBusy(false); }
-  };
-  const checkout = async (package_id, extra = {}) => {
-    setBusy(true);
-    try {
-      const { data } = await api.post("/payments/checkout", { package_id, origin_url: window.location.origin, ...extra });
-      window.location.href = data.checkout_url;
-    } catch (e) { toast.error(e?.response?.data?.detail || "Could not start checkout"); setBusy(false); }
   };
   const toggleItem = async (idx) => {
     const { data } = await api.put("/wellness/plan/toggle", { item_index: idx });
@@ -320,17 +333,20 @@ export default function Wellness() {
         <Button variant="ghost" size="icon" className="rounded-full" onClick={() => navigate("/chat")} data-testid="wellness-back-button"><ArrowLeft className="h-4 w-4" /></Button>
         <span className="font-display font-semibold text-xl tracking-tight">CampionAI <span className="italic font-light">Plus</span></span>
       </div>
-      {status.active && (
-        <span className="text-[10px] tracking-[0.2em] uppercase border border-border px-2 py-1 rounded-full text-foreground/60" data-testid="plus-status-badge">
-          {status.status === "trialing" ? "Trial" : "Active"}
-        </span>
-      )}
+      <div className="flex items-center gap-3">
+        {status.active && (
+          <span className="text-[10px] tracking-[0.2em] uppercase border border-border px-2 py-1 rounded-full text-foreground/60" data-testid="plus-status-badge">
+            {status.status === "trialing" ? "Trial" : "Active"}
+          </span>
+        )}
+        <AccountMenu />
+      </div>
     </header>
   );
 
   if (!status.active) {
     const onActivated = async () => { await refresh(); const s = await loadStatus(); if (s.active) await loadPlusData(); };
-    return <div className="min-h-screen bg-background relative"><Glow /><Header /><Paywall status={status} onTrial={startTrial} onCheckout={checkout} onDonate={checkout} onActivated={onActivated} busy={busy} /></div>;
+    return <div className="min-h-screen bg-background relative"><Glow /><Header /><Paywall status={status} onTrial={startTrial} onActivated={onActivated} busy={busy} /></div>;
   }
 
   const items = plan?.items || [];

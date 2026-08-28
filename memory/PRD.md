@@ -45,6 +45,24 @@ A privacy-first, multimodal AI daily companion that feels like a trusted close f
 - [x] Tested: iterations 1-4 (backend 75/75; frontend 100% of flows). Security: payment-status endpoint auth+ownership enforced.
 - [x] **PayPal LIVE subscriptions**: live Client ID/Secret (verified), Product + Monthly($9)/Yearly($86.40) plans + webhook auto-created via API. New `/api/webhook/paypal` verifies PayPal signature and handles all 6 events (ACTIVATED→grant, PAYMENT.SALE.COMPLETED→extend, CANCELLED→mark, SUSPENDED/EXPIRED→revoke, PAYMENT.FAILED→past_due). Webhook points to https://nurekha.com/api/webhook/paypal. Backend tested (auth/error/signature paths).
 
+## Implemented (2026-08) — Logout, PayPal-only billing, Doctor consultations
+- [x] **Logout fixed**: `AccountMenu` mounted on every authenticated page (was Chat-only via SettingsDialog). Real server-side revocation — `users.token_version` is a JWT claim, `POST /api/auth/logout` increments it, killing every issued token including any leaked into a URL.
+- [x] **Stripe removed entirely.** PayPal is the only rail. Real recurring subscriptions (auto-created billing plans, `PAYMENT.SALE.COMPLETED` renewals), signature-verified webhook as the authority, cancel/resume, billing history page. Prices now served from `GET /api/pricing` — one source of truth instead of three.
+- [x] Payment grant made atomic (`find_one_and_update` claim) — the webhook and client poll could previously both grant, double-extending a subscription.
+- [x] **Doctor consultations**: applications with automated KYC (Didit-default, provider-swappable) + manual licence review; country+language directory with ratings; scheduled bookings AND an instant "talk now" queue; doctor dashboard with availability, presence heartbeat, earnings.
+- [x] **Live calls**: raw WebRTC, own WebSocket signaling, no vendor SFU. Perfect-negotiation offer/answer, self-hosted coturn with time-limited HMAC credentials. Video/audio/chat modes. Consult chat stored in `consult_messages`, never `messages` — the AI must never see clinical conversation.
+- [x] **Free tier**: N volunteer sessions/month (admin-configurable) AND uncapped crisis sessions. The crisis flag is server-verified against a recent high-risk safety event, never taken from the client.
+- [x] **Payouts**: doctors set their own rate, volunteers $0, admin-configurable commission, manual settlement ledger in Admin.
+- [x] Crisis escalation now routes to real verified doctors and offers an immediate free consult. The fictional seeded "Dr. Maya Reyes" row was deleted.
+- [x] Hardening carried along: upload path-traversal fix, streaming upload size cap, MongoDB indexes (there were none), 8-char minimum password.
+
+### Known gaps (2026-08)
+- Signaling keeps rooms in-process — single uvicorn worker only. Redis pub/sub needed to scale out.
+- No session recording is possible with P2P WebRTC; needs an SFU if ever required.
+- Consult refunds on cancellation are manual.
+- `backend/tests/test_iteration4_plus_payments.py` still targets the deleted Stripe routes and needs rewriting for PayPal.
+- **Unverified**: PayPal merchant accounts in Nepal have historically been unable to *receive* payments. Confirm before relying on the billing phase.
+
 ## Backlog
 - **P1:** Provide production keys — Resend (email), Twilio (SMS), Fish Audio (voice), and a supported-country Stripe account to enable true recurring subscriptions (currently app-managed periods because Flow A sandbox is blocked for country NP).
 - **P1:** True Stripe subscription mode + customer portal + auto-renew (replace app-managed periods) once a supported Stripe account is claimed.
