@@ -17,7 +17,7 @@ import { useVisibilityRefetch } from "@/hooks/use-visibility-refetch";
 import {
   Plus, ArrowUp, Brain, Settings, LifeBuoy, Menu, Lock,
   MessageSquare, Trash2, Shield, Mic, Volume2, VolumeX, Sparkles, Paperclip, X, Loader2,
-  Copy, RefreshCw, ThumbsUp, ThumbsDown, Check, ChevronDown, Stethoscope,
+  Copy, RefreshCw, ThumbsUp, ThumbsDown, Check, ChevronDown, Stethoscope, Pin, FileText,
 } from "lucide-react";
 
 const STARTERS = [
@@ -49,6 +49,8 @@ export default function Chat() {
   const [atBottom, setAtBottom] = useState(true);
   const [copiedId, setCopiedId] = useState(null);
   const [feedback, setFeedback] = useState({});   // {messageId: 'up'|'down'}
+  const [summary, setSummary] = useState(null);
+  const [summarizing, setSummarizing] = useState(false);
   const lastUserText = useRef("");
   const scrollRef = useRef(null);
   const inputRef = useRef(null);
@@ -114,6 +116,26 @@ export default function Chat() {
       await api.post("/chat/feedback", { session_id: activeId, content: text, rating });
       toast(rating === "up" ? "Thanks — glad that helped" : "Thanks — I'll keep learning");
     } catch { /* best-effort */ }
+  };
+
+  const pinMessage = async (text) => {
+    try { await api.post("/memories/pin", { text }); toast.success("Pinned — I'll always remember this"); }
+    catch { toast.error("Couldn't pin that"); }
+  };
+
+  const recap = async () => {
+    if (!activeId) return;
+    setSummarizing(true);
+    setSummary("");
+    try {
+      const { data } = await api.post(`/sessions/${activeId}/summary`);
+      setSummary(data.summary);
+    } catch {
+      toast.error("Couldn't create a recap right now");
+      setSummary(null);
+    } finally {
+      setSummarizing(false);
+    }
   };
 
   const regenerate = () => {
@@ -321,6 +343,11 @@ export default function Chat() {
             </div>
           </div>
           <div className="flex items-center gap-2">
+            {activeId && messages.length > 1 && (
+              <Button variant="ghost" size="sm" className="rounded-full gap-1.5 text-muted-foreground hover:text-foreground" onClick={recap} data-testid="recap-button">
+                <FileText className="h-4 w-4" /> <span className="hidden sm:inline">Recap</span>
+              </Button>
+            )}
             {voiceEnabled && (
               <Button variant="ghost" size="icon" className="rounded-full text-muted-foreground hover:text-foreground" data-testid="voice-toggle-button"
                 onClick={() => { const n = !speakOn; setSpeakOn(n); if (!n && audioRef.current) audioRef.current.pause(); toast(n ? "CampionAI will speak replies" : "Voice muted"); }}>
@@ -387,6 +414,10 @@ export default function Chat() {
                           <button onClick={() => copyMessage(m.id, m.content)} title="Copy" data-testid="copy-message"
                             className="h-8 w-8 rounded-full flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-accent transition-colors">
                             {copiedId === m.id ? <Check className="h-3.5 w-3.5 text-emerald-400" /> : <Copy className="h-3.5 w-3.5" />}
+                          </button>
+                          <button onClick={() => pinMessage(m.content)} title="Pin to memory" data-testid="pin-message"
+                            className="h-8 w-8 rounded-full flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-accent transition-colors">
+                            <Pin className="h-3.5 w-3.5" />
                           </button>
                           {idx === messages.length - 1 && (
                             <button onClick={regenerate} title="Regenerate" data-testid="regenerate-message"
@@ -464,6 +495,28 @@ export default function Chat() {
 
       <MemoryDrawer open={memOpen} onOpenChange={setMemOpen} />
       <SettingsDialog open={setOpen} onOpenChange={setSetOpen} />
+
+      <Dialog open={summary !== null} onOpenChange={(o) => { if (!o) setSummary(null); }}>
+        <DialogContent className="max-w-md" data-testid="recap-dialog">
+          <DialogHeader>
+            <DialogTitle className="font-display flex items-center gap-2"><FileText className="h-5 w-5" /> A little recap</DialogTitle>
+            <DialogDescription>A gentle, private summary of this conversation.</DialogDescription>
+          </DialogHeader>
+          {summarizing ? (
+            <div className="py-8 flex items-center justify-center gap-2 text-muted-foreground" data-testid="recap-loading">
+              <Loader2 className="h-4 w-4 animate-spin" /> Writing your recap…
+            </div>
+          ) : (
+            <p className="font-ai text-lg font-light leading-relaxed text-foreground/90 whitespace-pre-wrap" data-testid="recap-text">{summary}</p>
+          )}
+          {!summarizing && summary && (
+            <Button variant="outline" className="rounded-full mt-2" data-testid="recap-pin"
+              onClick={() => { pinMessage(summary); setSummary(null); }}>
+              <Pin className="h-3.5 w-3.5 mr-1.5" /> Save this to memory
+            </Button>
+          )}
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={!!handoff} onOpenChange={(o) => !o && setHandoff(null)}>
         <DialogContent className="bg-popover border-border" data-testid="handoff-dialog">

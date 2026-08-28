@@ -86,8 +86,9 @@ A privacy-first, multimodal AI daily companion that feels like a trusted close f
 ## 20-Feature Program (2026-08-28)
 Phased build of 20 requested features. Phase 1 shipped:
 - [x] **Phase 1 — Wellness pack** (5/20): Mood journal + 30-day trend graph (`POST /api/wellness/mood`, `GET /api/wellness/mood/trends`, upsert 1/day), Gratitude jar (`POST/GET/DELETE /api/wellness/gratitude`, `/random`), Guided breathing player (frontend `BreathingPlayer.js`, box-breathing animation), Daily mood check-in (5-emoji picker), Habit badges (`GET /api/wellness/badges`, 6 derived badges + progress). New Wellness tabs: Mood, Breathe, Gratitude + badges strip. Backend 15/15 tests passed. Frontend compiled.
-- [ ] Phase 2 — Experience: light theme toggle, personality/tone quiz, export data PDF, private chats
-- [ ] Phase 3 — Chat: mood-aware replies, pin-to-memory, conversation summaries
+- [x] **Phase 2 — Experience** (4/20): Light/warm theme toggle (`lib/theme.js` + `.light` CSS vars, toggle in Settings → Feel tab; app pages use CSS vars, marketing pages keep bespoke dark art). Personality/tone quiz (4 tones → `communication_style`, injected into `build_system_prompt` with concrete guidance). Keepsake export (enriched `GET /api/data/export` + printable HTML "keepsake" you can save as PDF + JSON download). Private chats — already existed (MemoryDrawer toggle + `private_mode` respected in chat), verified.
+- [x] **Phase 3 — Chat** (3/20): Mood-aware replies (recent `mood_entries` injected into chat system prompt, non-private only). Pin-to-memory (`POST /api/memories/pin` → LONG_TERM memory; Pin button in chat message actions + "save recap to memory"). Conversation summaries (`POST /api/sessions/{id}/summary` LLM recap; "Recap" button in chat header → dialog). Frontend compiled.
+- [ ] Phase 4 — Doctor: availability calendar, ratings & reviews, in-session notes, follow-ups
 - [ ] Phase 4 — Doctor: availability calendar, ratings & reviews, in-session notes, follow-ups
 - [ ] Phase 5 — Safety: crisis-mode redesign + local hotlines, trusted circle
 - [ ] Phase 6 — NEEDS KEYS: voice (Fish Audio), smart reminders

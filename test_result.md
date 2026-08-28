@@ -258,11 +258,39 @@ backend:
         -working: true
         -agent: "testing"
         -comment: "VERIFIED ALL 15 TEST SCENARIOS: (1) POST /api/wellness/mood with {mood:4, note:'good day'} returns 200 with mood=4 and id. (2) mood=0 returns 422 validation error (NOT 500). (3) mood=6 returns 422 validation error (NOT 500). (4) UPSERT VERIFIED: Logging mood=2 for today updates existing entry (not duplicate). (5) GET /api/wellness/mood/trends?days=30 returns 200 with {series:[...], average:2.0, count:1, today:{mood:2}} confirming UPSERT behavior. (6) POST /api/wellness/gratitude with {text:'morning coffee'} returns 200 with {id, text, created_at}. (7) Empty text '' returns 422 validation error (NOT 500). (8) GET /api/wellness/gratitude returns 200 with {items:[...], count:2} containing added item. (9) GET /api/wellness/gratitude/random returns 200 with {item:<obj>} (non-null). (10) DELETE /api/wellness/gratitude/{id} returns 200 with {ok:true}. (11) GET /api/wellness/gratitude confirms deleted item no longer in list. (12) GET /api/wellness/badges returns 200 with {badges:[6 items], earned_count:1}. (13) All badges have required fields: id, label, icon, metric, threshold, value, earned, progress. (14) 'mood_tracker' and 'grateful_heart' badges exist. (15) Auth guard: POST /api/wellness/mood without Authorization header returns 401 (NOT 500). All endpoints require Plus subscription (admin already has Plus trialing). Test file: /app/backend_test.py"
+  - task: "Phase-3 Chat: POST /api/memories/pin"
+    implemented: true
+    working: true
+    file: "backend/server.py, backend/models.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        -working: "NA"
+        -agent: "main"
+        -comment: "New endpoint POST /api/memories/pin accepts {text} (min_length=1, max_length=500), creates LONG_TERM memory with category='pinned', tier='LONG_TERM', importance=0.99, pinned=True. Requires auth. Empty text → 422 validation error."
+        -working: true
+        -agent: "testing"
+        -comment: "VERIFIED ALL 4 TEST SCENARIOS: (1) POST /api/memories/pin with {text:'I love hiking on weekends'} returns 200 with memory doc containing content, category='pinned', tier='LONG_TERM', id. (2) GET /api/memories returns 200 with list that INCLUDES the pinned memory (verified by matching content). (3) Empty text {text:''} returns 422 validation error (NOT 500). (4) No Authorization header returns 401 (auth required, NOT 500). Test file: /app/backend_test.py"
+  - task: "Phase-3 Chat: POST /api/sessions/{id}/summary"
+    implemented: true
+    working: true
+    file: "backend/server.py, backend/models.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        -working: "NA"
+        -agent: "main"
+        -comment: "New endpoint POST /api/sessions/{session_id}/summary generates warm recap of conversation. Requires auth. Returns {summary: '<warm text>'} for sessions with >=2 messages (calls LLM). Returns friendly stub 'This conversation is just getting started — there's not much to recap yet.' for <2 messages. Returns 404 for non-existent/not-owned session."
+        -working: true
+        -agent: "testing"
+        -comment: "VERIFIED ALL 5 TEST SCENARIOS: (1) Created real conversation via POST /api/chat/stream with 2 messages ('I have been feeling stressed about work lately' and 'yeah my manager keeps piling on tasks'). Session created successfully. (2) POST /api/sessions/{id}/summary with real conversation returns 200 with non-empty warm summary text: 'You came in today carrying the weight of a really demanding work situation — your manager keeps adding tasks...' (LLM call successful, EMERGENT_LLM_KEY working). (3) POST /api/sessions/{random-uuid}/summary returns 404 for non-existent session (NOT 500). (4) Created empty session via POST /api/sessions, then summary returns 200 with friendly stub: 'This conversation is just getting started — there's not much to recap yet.' (5) REGRESSION VERIFIED: GET /api/sessions returns 200 with list of sessions. GET /api/auth/me returns 200 with user email. Test file: /app/backend_test.py"
 
 metadata:
   created_by: "main_agent"
-  version: "1.8"
-  test_sequence: 9
+  version: "1.9"
+  test_sequence: 10
   run_ui: false
 
 test_plan:
@@ -272,6 +300,10 @@ test_plan:
   test_priority: "high_first"
 
 new_backend_tasks:
+  - task: "Phase 3 Chat: mood-aware prompt, pin-to-memory, conversation summary"
+    file: "backend/server.py, backend/models.py"
+    endpoints: "POST /api/memories/pin, POST /api/sessions/{id}/summary; plus mood-aware injection into chat system prompt"
+    notes: "pin creates a LONG_TERM memory (category 'pinned', importance 0.99) so it shows in memory context — auth required, empty text → 422. summary aggregates a session's messages and calls the LLM for a warm recap; <2 msgs returns a friendly stub; unknown/not-owned session → 404. Mood-aware: chat handler injects the user's most recent mood_entries mood into the system prompt (non-private only)."
   - task: "Phase 1 Wellness: mood journal, gratitude jar, badges"
     file: "backend/server.py, backend/models.py"
     endpoints: "POST /api/wellness/mood, GET /api/wellness/mood/trends, POST/GET/DELETE /api/wellness/gratitude, GET /api/wellness/gratitude/random, GET /api/wellness/badges"
@@ -330,6 +362,6 @@ agent_communication:
 
 agent_communication:
     -agent: "testing"
-    -message: "✅ PHASE-1 WELLNESS ENDPOINTS - ALL 15 TESTS PASSED. (1) POST /api/wellness/mood with {mood:4, note:'good day'} returns 200 with mood=4 and id. (2) mood=0 returns 422 validation error (NOT 500). (3) mood=6 returns 422 validation error (NOT 500). (4) UPSERT VERIFIED: Logging mood=2 for today updates existing entry (not duplicate). (5) GET /api/wellness/mood/trends?days=30 returns 200 with {series, average:2.0, count:1, today:{mood:2}} confirming UPSERT behavior. (6) POST /api/wellness/gratitude with {text:'morning coffee'} returns 200 with {id, text, created_at}. (7) Empty text '' returns 422 validation error (NOT 500). (8) GET /api/wellness/gratitude returns 200 with {items, count:2} containing added item. (9) GET /api/wellness/gratitude/random returns 200 with {item:<obj>} (non-null). (10) DELETE /api/wellness/gratitude/{id} returns 200 with {ok:true}. (11) GET /api/wellness/gratitude confirms deleted item no longer in list. (12) GET /api/wellness/badges returns 200 with {badges:[6 items], earned_count:1}. (13) All badges have required fields: id, label, icon, metric, threshold, value, earned, progress. (14) 'mood_tracker' and 'grateful_heart' badges exist. (15) Auth guard: POST /api/wellness/mood without Authorization header returns 401 (NOT 500). All endpoints require Plus subscription (admin already has Plus trialing). Test file: /app/backend_test.py. ALL REQUIREMENTS FROM REVIEW_REQUEST MET."
+    -message: "✅ ALL PHASE-3 CHAT BACKEND TESTS PASSED (11/11). (1) POST /api/memories/pin: Valid text returns 200 with memory doc (category='pinned', tier='LONG_TERM'). Pinned memory appears in GET /api/memories list. Empty text returns 422 (NOT 500). No auth returns 401. (2) POST /api/sessions/{id}/summary: Created real conversation with 2 messages via POST /api/chat/stream. Summary endpoint returns 200 with warm LLM-generated text (EMERGENT_LLM_KEY working). Non-existent session returns 404 (NOT 500). Empty session (<2 messages) returns friendly stub 'This conversation is just getting started — there's not much to recap yet.' (3) REGRESSION VERIFIED: GET /api/sessions returns 200. GET /api/auth/me returns 200. Test file: /app/backend_test.py. ALL REQUIREMENTS FROM REVIEW_REQUEST MET. NO ISSUES FOUND."
 
 #====================================================================================================

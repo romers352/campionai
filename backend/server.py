@@ -24,7 +24,7 @@ from models import (
     ProviderSettings, PrivateModeInput, VoiceSettingsInput, TTSInput,
     FoodInput, FoodEdit, EventInput, PlanItemToggle, PlanItemAdd, PlanReorder,
     ChatFeedback, MoodInput, GratitudeInput, PaypalActivate, DonationOrder,
-    GoogleSessionInput, ForgotPasswordInput, ResetPasswordInput, ContactInput, now_iso, new_id,
+    MemoryPin, GoogleSessionInput, ForgotPasswordInput, ResetPasswordInput, ContactInput, now_iso, new_id,
 )
 from auth import (
     hash_password, verify_password, create_token,
@@ -75,6 +75,13 @@ def build_system_prompt(user, memory_context, transcript, risk):
     profile = user.get("profile", {})
     name = profile.get("preferred_name") or "friend"
     style = profile.get("communication_style") or "warm"
+    tone_guides = {
+        "gentle": "Lean soft and tender — slow, soothing, extra gentle. Reassure often; never blunt.",
+        "warm": "Warm and balanced — the caring, steady close friend (this is the default).",
+        "direct": "Be honest and straightforward — still kind, but clear and to the point, no over-cushioning.",
+        "playful": "Be light and a little playful — gentle humour and buoyancy where it fits, without dismissing feelings.",
+    }
+    tone_hint = tone_guides.get(str(style).lower().strip(), None)
     facts = []
     if profile.get("work"):
         facts.append(f"Work: {profile['work']}")
@@ -96,7 +103,7 @@ Voice & style:
 - Be curious about {name}. Ask thoughtful follow-ups. Remember what matters. Celebrate wins, sit with the hard stuff.
 - Use emojis very sparingly (at most one, and often none). Warmth comes from your words, not decorations.
 - Write in natural, plain sentences. Avoid headings, bullet lists, and markdown formatting; a rare **bold** word for a hotline name is fine.
-- Communication style preference: {style}.
+- Communication style preference: {style}.{(" " + tone_hint) if tone_hint else ""}
 - You are NOT a therapist or psychiatrist. You do NOT diagnose, and you do NOT clinically probe. You keep the person company and keep them talking.
 {facts_block}
 """
@@ -468,6 +475,18 @@ async def chat_stream(inp: ChatInput, user=Depends(get_current_user)):
     memory_ctx = "" if private else await build_memory_context(db, user["id"])
     system = build_system_prompt(user, memory_ctx, transcript, risk)
 
+    # Mood-aware: gently factor in their most recent self-reported mood.
+    if not private:
+        recent_mood = await db.mood_entries.find_one(
+            {"user_id": user["id"]}, sort=[("date", -1)], projection={"_id": 0, "mood": 1, "note": 1}
+        )
+        if recent_mood:
+            mlabels = {1: "having a really rough time", 2: "feeling low", 3: "feeling okay",
+                       4: "feeling pretty good", 5: "feeling great"}
+            note = f" (they noted: {recent_mood['note']})" if recent_mood.get("note") else ""
+            system += (f"\nMood signal: the last time they checked in they were {mlabels.get(recent_mood['mood'], 'okay')}{note}. "
+                       "Let this quietly inform your warmth and pacing — do NOT state it back to them mechanically or make it the topic unless they bring it up.")
+
     if not private and _plus_state(user)["active"] and risk == "none":
         coach = await _wellness_coach_context(user)
         if coach:
@@ -666,6 +685,45 @@ async def list_memories(user=Depends(get_current_user)):
     return mems
 
 
+@api.post("/memories/pin")
+async def pin_memory(inp: MemoryPin, user=Depends(get_current_user)):
+    """Let a user hand-pin something important so CampionAI always remembers it."""
+    doc = {
+        "id": new_id(), "user_id": user["id"], "session_id": None,
+        "content": inp.text.strip()[:500], "category": "pinned", "tier": "LONG_TERM",
+        "importance": 0.99, "sensitivity": 0.0, "confidence": 1.0, "stability": 1.0,
+        "pinned": True, "created_at": now_iso(),
+    }
+    await db.memories.insert_one(dict(doc))
+    doc.pop("_id", None)
+    return doc
+
+
+@api.post("/sessions/{session_id}/summary")
+async def summarize_session(session_id: str, user=Depends(get_current_user)):
+    """A warm, private recap of a conversation the user can revisit."""
+    sess = await db.sessions.find_one({"id": session_id, "user_id": user["id"]})
+    if not sess:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    msgs = await db.messages.find(
+        {"session_id": session_id, "user_id": user["id"]}, {"_id": 0, "role": 1, "content": 1}
+    ).sort("created_at", 1).to_list(200)
+    if len(msgs) < 2:
+        return {"summary": "This conversation is just getting started — there's not much to recap yet."}
+    convo = "\n".join(f"{'Them' if m['role'] == 'user' else 'You'}: {m['content']}" for m in msgs if m.get("content"))[:8000]
+    sys = (
+        "You are CampionAI writing a short, warm recap of a conversation for the person you were talking with. "
+        "Write 3-5 gentle sentences in second person ('you'), capturing how they seemed, what mattered, and any "
+        "kind takeaway or next step. No clinical language, no bullet lists, no diagnosis. Warm and human."
+    )
+    try:
+        summary = await router_engine.complete(sys, convo, tier="medium", session_id=f"sum-{session_id}")
+    except Exception as e:
+        logger.error(f"summary failed: {e}")
+        raise HTTPException(status_code=502, detail="Couldn't create a summary right now")
+    return {"summary": (summary or "").strip()}
+
+
 @api.put("/memories/{memory_id}")
 async def update_memory(memory_id: str, inp: MemoryUpdate, user=Depends(get_current_user)):
     data = inp.model_dump(exclude_none=True)
@@ -754,13 +812,37 @@ async def my_safety_events(user=Depends(get_current_user)):
 # ---------------- Data controls ----------------
 @api.get("/data/export")
 async def export_data(user=Depends(get_current_user)):
-    sessions = await db.sessions.find({"user_id": user["id"]}, {"_id": 0}).to_list(1000)
-    messages = await db.messages.find({"user_id": user["id"]}, {"_id": 0}).to_list(100000)
-    memories = await db.memories.find({"user_id": user["id"]}, {"_id": 0}).to_list(10000)
+    """A keepsake export of everything CampionAI holds for this user, nicely organised."""
+    uid = user["id"]
+    proj = {"_id": 0}
+    sessions = await db.sessions.find({"user_id": uid}, proj).sort("created_at", 1).to_list(1000)
+    messages = await db.messages.find({"user_id": uid}, proj).sort("created_at", 1).to_list(100000)
+    by_session = {}
+    for m in messages:
+        by_session.setdefault(m.get("session_id"), []).append(
+            {"role": m.get("role"), "content": m.get("content"), "created_at": m.get("created_at")}
+        )
+    chats = [{
+        "title": s.get("title") or "Conversation",
+        "created_at": s.get("created_at"),
+        "messages": by_session.get(s.get("id"), []),
+    } for s in sessions]
+    memories = await db.memories.find({"user_id": uid}, proj).sort("created_at", 1).to_list(10000)
+    moods = await db.mood_entries.find({"user_id": uid}, proj).sort("date", 1).to_list(500)
+    gratitude = await db.gratitude.find({"user_id": uid}, proj).sort("created_at", 1).to_list(500)
     return {
         "exported_at": now_iso(),
         "profile": _public_user(user),
-        "sessions": sessions, "messages": messages, "memories": memories,
+        "stats": {
+            "conversations": len(chats), "messages": len(messages), "memories": len(memories),
+            "moods_logged": len(moods), "gratitude_notes": len(gratitude),
+        },
+        "chats": chats,
+        "memories": [{"text": m.get("text"), "created_at": m.get("created_at")} for m in memories],
+        "mood_journal": [{"date": m.get("date"), "mood": m.get("mood"), "note": m.get("note")} for m in moods],
+        "gratitude": [{"text": g.get("text"), "created_at": g.get("created_at")} for g in gratitude],
+        # kept for backward-compat with any existing consumers
+        "sessions": sessions, "messages": messages,
     }
 
 

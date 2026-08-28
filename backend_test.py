@@ -921,7 +921,350 @@ def test_wellness_endpoints():
         print(f"{RED}✗ SOME WELLNESS TESTS FAILED{RESET}")
         return False
 
+def test_phase3_chat_endpoints():
+    """Test Phase-3 Chat endpoints: pin memory, conversation summary"""
+    print(f"\n{BLUE}{'='*70}{RESET}")
+    print(f"{BLUE}PHASE-3 CHAT ENDPOINTS TEST{RESET}")
+    print(f"{BLUE}{'='*70}{RESET}")
+    
+    results = []
+    
+    # Step 1: Login to get JWT token
+    log_test("Login to get JWT token")
+    try:
+        login_resp = requests.post(
+            f"{BASE_URL}/auth/login",
+            json={"email": ADMIN_EMAIL, "password": ADMIN_PASSWORD},
+            timeout=10
+        )
+        if login_resp.status_code != 200:
+            log_fail(f"Login failed with status {login_resp.status_code}: {login_resp.text}")
+            return False
+        
+        token = login_resp.json().get("token")
+        if not token:
+            log_fail("No token in login response")
+            return False
+        
+        log_pass(f"Login successful, token obtained")
+        headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+    except Exception as e:
+        log_fail(f"Login exception: {e}")
+        return False
+    
+    # Test 1: POST /api/memories/pin with valid text
+    log_test("POST /api/memories/pin - Valid text → 200 with memory doc")
+    try:
+        pin_payload = {"text": "I love hiking on weekends"}
+        resp = requests.post(f"{BASE_URL}/memories/pin", json=pin_payload, headers=headers, timeout=10)
+        
+        if resp.status_code == 200:
+            data = resp.json()
+            # Verify response structure
+            if (data.get("content") == "I love hiking on weekends" and
+                data.get("category") == "pinned" and
+                data.get("tier") == "LONG_TERM" and
+                "id" in data):
+                log_pass(f"Memory pinned successfully: category={data['category']}, tier={data['tier']}")
+                pinned_memory_content = data.get("content")
+                results.append(("POST /api/memories/pin (valid text → 200)", True))
+            else:
+                log_fail(f"Response missing expected fields or values: {data}")
+                results.append(("POST /api/memories/pin (valid text → 200)", False))
+                pinned_memory_content = None
+        else:
+            log_fail(f"Status {resp.status_code}: {resp.text}")
+            results.append(("POST /api/memories/pin (valid text → 200)", False))
+            pinned_memory_content = None
+    except Exception as e:
+        log_fail(f"Exception: {e}")
+        results.append(("POST /api/memories/pin (valid text → 200)", False))
+        pinned_memory_content = None
+    
+    # Test 2: GET /api/memories - Verify pinned memory is included
+    log_test("GET /api/memories - Verify pinned memory is included")
+    try:
+        resp = requests.get(f"{BASE_URL}/memories", headers=headers, timeout=10)
+        
+        if resp.status_code == 200:
+            memories = resp.json()  # Returns a list directly
+            
+            # Check if pinned memory is in the list
+            if pinned_memory_content:
+                found = any(m.get("content") == pinned_memory_content for m in memories)
+                if found:
+                    log_pass(f"Pinned memory found in GET /api/memories list")
+                    results.append(("GET /api/memories (includes pinned)", True))
+                else:
+                    log_fail(f"Pinned memory NOT found in list. Total memories: {len(memories)}")
+                    results.append(("GET /api/memories (includes pinned)", False))
+            else:
+                log_info("Skipping verification (no pinned memory from previous test)")
+                results.append(("GET /api/memories (includes pinned)", False))
+        else:
+            log_fail(f"Status {resp.status_code}: {resp.text}")
+            results.append(("GET /api/memories (includes pinned)", False))
+    except Exception as e:
+        log_fail(f"Exception: {e}")
+        results.append(("GET /api/memories (includes pinned)", False))
+    
+    # Test 3: POST /api/memories/pin with empty text → 422
+    log_test("POST /api/memories/pin - Empty text → 422 (NOT 500)")
+    try:
+        pin_payload = {"text": ""}
+        resp = requests.post(f"{BASE_URL}/memories/pin", json=pin_payload, headers=headers, timeout=10)
+        
+        if resp.status_code == 422:
+            log_pass(f"Correctly rejected empty text with 422 validation error")
+            results.append(("POST /api/memories/pin (empty text → 422)", True))
+        elif resp.status_code == 500:
+            log_fail(f"Got 500 error (should be 422): {resp.text}")
+            results.append(("POST /api/memories/pin (empty text → 422)", False))
+        else:
+            log_fail(f"Unexpected status {resp.status_code}: {resp.text}")
+            results.append(("POST /api/memories/pin (empty text → 422)", False))
+    except Exception as e:
+        log_fail(f"Exception: {e}")
+        results.append(("POST /api/memories/pin (empty text → 422)", False))
+    
+    # Test 4: POST /api/memories/pin without auth → 401/403
+    log_test("POST /api/memories/pin - No auth header → 401/403")
+    try:
+        pin_payload = {"text": "test without auth"}
+        resp = requests.post(f"{BASE_URL}/memories/pin", json=pin_payload, timeout=10)
+        
+        if resp.status_code in [401, 403]:
+            log_pass(f"Correctly rejected with {resp.status_code} (auth required)")
+            results.append(("POST /api/memories/pin (no auth → 401/403)", True))
+        else:
+            log_fail(f"Unexpected status {resp.status_code}: {resp.text}")
+            results.append(("POST /api/memories/pin (no auth → 401/403)", False))
+    except Exception as e:
+        log_fail(f"Exception: {e}")
+        results.append(("POST /api/memories/pin (no auth → 401/403)", False))
+    
+    # Test 5: Create a real conversation for summary testing
+    log_test("Create real conversation - POST /api/chat/stream (streaming)")
+    session_id = None
+    try:
+        # First message - this will create a session
+        chat_payload = {"session_id": None, "message": "I have been feeling stressed about work lately"}
+        log_info("Sending first message to /api/chat/stream (streaming endpoint)...")
+        
+        # /api/chat/stream is a streaming endpoint, so we need to handle it differently
+        resp = requests.post(
+            f"{BASE_URL}/chat/stream",
+            json=chat_payload,
+            headers=headers,
+            timeout=30,
+            stream=True
+        )
+        
+        if resp.status_code == 200:
+            log_pass(f"First message sent successfully (status 200, streaming response)")
+            
+            # Now get the session_id by calling GET /api/sessions
+            time.sleep(1)  # Give it a moment to save
+            sessions_resp = requests.get(f"{BASE_URL}/sessions", headers=headers, timeout=10)
+            
+            if sessions_resp.status_code == 200:
+                sessions = sessions_resp.json()
+                if sessions and len(sessions) > 0:
+                    # Get the most recent session
+                    session_id = sessions[0].get("id")
+                    log_pass(f"Session created with id: {session_id}")
+                    results.append(("POST /api/chat/stream (create conversation)", True))
+                else:
+                    log_fail("No sessions found after chat message")
+                    results.append(("POST /api/chat/stream (create conversation)", False))
+            else:
+                log_fail(f"Failed to get sessions: {sessions_resp.status_code}")
+                results.append(("POST /api/chat/stream (create conversation)", False))
+        else:
+            log_fail(f"Chat failed with status {resp.status_code}: {resp.text}")
+            results.append(("POST /api/chat/stream (create conversation)", False))
+    except Exception as e:
+        log_fail(f"Exception: {e}")
+        results.append(("POST /api/chat/stream (create conversation)", False))
+    
+    # Test 6: Send second message to same session
+    if session_id:
+        log_test("Send second message to same session")
+        try:
+            chat_payload = {"session_id": session_id, "message": "yeah my manager keeps piling on tasks"}
+            resp = requests.post(
+                f"{BASE_URL}/chat/stream",
+                json=chat_payload,
+                headers=headers,
+                timeout=30,
+                stream=True
+            )
+            
+            if resp.status_code == 200:
+                log_pass(f"Second message sent successfully")
+                time.sleep(1)  # Give it a moment to save
+                results.append(("POST /api/chat/stream (second message)", True))
+            else:
+                log_fail(f"Status {resp.status_code}: {resp.text}")
+                results.append(("POST /api/chat/stream (second message)", False))
+        except Exception as e:
+            log_fail(f"Exception: {e}")
+            results.append(("POST /api/chat/stream (second message)", False))
+    else:
+        log_info("Skipping second message (no session_id from previous test)")
+        results.append(("POST /api/chat/stream (second message)", False))
+    
+    # Test 7: POST /api/sessions/{id}/summary with real conversation
+    if session_id:
+        log_test(f"POST /api/sessions/{session_id}/summary - Real conversation → 200 with summary")
+        try:
+            resp = requests.post(
+                f"{BASE_URL}/sessions/{session_id}/summary",
+                headers=headers,
+                timeout=35  # Allow up to 35s for LLM call
+            )
+            
+            if resp.status_code == 200:
+                data = resp.json()
+                summary = data.get("summary", "")
+                
+                if summary and len(summary) > 10:  # Non-empty warm text
+                    log_pass(f"Summary generated successfully: '{summary[:100]}...'")
+                    results.append(("POST /api/sessions/{id}/summary (real conversation)", True))
+                else:
+                    log_fail(f"Summary is empty or too short: '{summary}'")
+                    results.append(("POST /api/sessions/{id}/summary (real conversation)", False))
+            elif resp.status_code == 502:
+                log_info(f"Got 502 - LLM provider may have errored (acceptable per review_request)")
+                log_info(f"Response: {resp.text}")
+                results.append(("POST /api/sessions/{id}/summary (real conversation)", True))
+            else:
+                log_fail(f"Status {resp.status_code}: {resp.text}")
+                results.append(("POST /api/sessions/{id}/summary (real conversation)", False))
+        except Exception as e:
+            log_fail(f"Exception: {e}")
+            results.append(("POST /api/sessions/{id}/summary (real conversation)", False))
+    else:
+        log_info("Skipping summary test (no session_id from previous test)")
+        results.append(("POST /api/sessions/{id}/summary (real conversation)", False))
+    
+    # Test 8: POST /api/sessions/{random-uuid}/summary → 404
+    log_test("POST /api/sessions/{random-uuid}/summary - Non-existent session → 404")
+    try:
+        fake_session_id = "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+        resp = requests.post(
+            f"{BASE_URL}/sessions/{fake_session_id}/summary",
+            headers=headers,
+            timeout=10
+        )
+        
+        if resp.status_code == 404:
+            log_pass(f"Correctly returned 404 for non-existent session")
+            results.append(("POST /api/sessions/{id}/summary (non-existent → 404)", True))
+        elif resp.status_code == 500:
+            log_fail(f"Got 500 error (should be 404): {resp.text}")
+            results.append(("POST /api/sessions/{id}/summary (non-existent → 404)", False))
+        else:
+            log_fail(f"Unexpected status {resp.status_code}: {resp.text}")
+            results.append(("POST /api/sessions/{id}/summary (non-existent → 404)", False))
+    except Exception as e:
+        log_fail(f"Exception: {e}")
+        results.append(("POST /api/sessions/{id}/summary (non-existent → 404)", False))
+    
+    # Test 9: Create empty session and test summary
+    log_test("POST /api/sessions (create empty session) then summary → friendly stub")
+    try:
+        # Create a new empty session with optional fields
+        create_payload = {"title": "Test empty session", "private": False}
+        create_resp = requests.post(f"{BASE_URL}/sessions", json=create_payload, headers=headers, timeout=10)
+        
+        if create_resp.status_code == 200:
+            empty_session = create_resp.json()
+            empty_session_id = empty_session.get("id")
+            log_pass(f"Empty session created: {empty_session_id}")
+            
+            # Now try to get summary for this empty session
+            summary_resp = requests.post(
+                f"{BASE_URL}/sessions/{empty_session_id}/summary",
+                headers=headers,
+                timeout=10
+            )
+            
+            if summary_resp.status_code == 200:
+                data = summary_resp.json()
+                summary = data.get("summary", "")
+                
+                # Should return friendly stub for <2 messages
+                if "just getting started" in summary.lower() or "not much to recap" in summary.lower():
+                    log_pass(f"Friendly stub returned: '{summary}'")
+                    results.append(("POST /api/sessions/{id}/summary (empty session → stub)", True))
+                else:
+                    log_fail(f"Expected friendly stub, got: '{summary}'")
+                    results.append(("POST /api/sessions/{id}/summary (empty session → stub)", False))
+            else:
+                log_fail(f"Summary failed with status {summary_resp.status_code}: {summary_resp.text}")
+                results.append(("POST /api/sessions/{id}/summary (empty session → stub)", False))
+        else:
+            log_fail(f"Failed to create empty session: {create_resp.status_code} - {create_resp.text}")
+            results.append(("POST /api/sessions/{id}/summary (empty session → stub)", False))
+    except Exception as e:
+        log_fail(f"Exception: {e}")
+        results.append(("POST /api/sessions/{id}/summary (empty session → stub)", False))
+    
+    # Test 10: Regression - GET /api/sessions → 200
+    log_test("Regression: GET /api/sessions → 200")
+    try:
+        resp = requests.get(f"{BASE_URL}/sessions", headers=headers, timeout=10)
+        
+        if resp.status_code == 200:
+            sessions = resp.json()
+            log_pass(f"GET /api/sessions returned 200 with {len(sessions)} sessions")
+            results.append(("Regression: GET /api/sessions → 200", True))
+        else:
+            log_fail(f"Status {resp.status_code}: {resp.text}")
+            results.append(("Regression: GET /api/sessions → 200", False))
+    except Exception as e:
+        log_fail(f"Exception: {e}")
+        results.append(("Regression: GET /api/sessions → 200", False))
+    
+    # Test 11: Regression - GET /api/auth/me → 200
+    log_test("Regression: GET /api/auth/me → 200")
+    try:
+        resp = requests.get(f"{BASE_URL}/auth/me", headers=headers, timeout=10)
+        
+        if resp.status_code == 200:
+            user = resp.json()
+            log_pass(f"GET /api/auth/me returned 200 with user: {user.get('email')}")
+            results.append(("Regression: GET /api/auth/me → 200", True))
+        else:
+            log_fail(f"Status {resp.status_code}: {resp.text}")
+            results.append(("Regression: GET /api/auth/me → 200", False))
+    except Exception as e:
+        log_fail(f"Exception: {e}")
+        results.append(("Regression: GET /api/auth/me → 200", False))
+    
+    # Summary
+    print(f"\n{BLUE}{'='*70}{RESET}")
+    print(f"{BLUE}PHASE-3 CHAT ENDPOINTS TEST SUMMARY{RESET}")
+    print(f"{BLUE}{'='*70}{RESET}")
+    
+    passed = sum(1 for _, r in results if r)
+    total = len(results)
+    
+    for name, result in results:
+        status = f"{GREEN}PASS{RESET}" if result else f"{RED}FAIL{RESET}"
+        print(f"{status} - {name}")
+    
+    print(f"\n{BLUE}Total: {passed}/{total} tests passed{RESET}")
+    
+    if passed == total:
+        print(f"{GREEN}✓ ALL PHASE-3 CHAT TESTS PASSED{RESET}")
+        return True
+    else:
+        print(f"{RED}✗ SOME PHASE-3 CHAT TESTS FAILED{RESET}")
+        return False
+
 if __name__ == "__main__":
-    # Run wellness tests
-    success = test_wellness_endpoints()
+    # Run Phase-3 Chat tests
+    success = test_phase3_chat_endpoints()
     sys.exit(0 if success else 1)

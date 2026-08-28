@@ -98,6 +98,10 @@ class MemoryUpdate(BaseModel):
     tier: Optional[str] = None
 
 
+class MemoryPin(BaseModel):
+    text: str = Field(min_length=1, max_length=500)
+
+
 # ---------- Admin ----------
 class ModelRouteConfig(BaseModel):
     tier: str  # cheap | medium | powerful
