@@ -244,11 +244,25 @@ backend:
         -working: true
         -agent: "testing"
         -comment: "VERIFIED ALL 10 TEST SCENARIOS: (1) POST /api/auth/forgot-password with registered email (admin@campionai.com) + Origin header returns 200 with {ok:true, message, dev_reset_link, email_configured:false}. (2) SECURITY CHECK PASSED: Unknown email (nobody-xyz-unknown@example.com) returns 200 with same generic message but WITHOUT dev_reset_link (no email-existence leak). (3) Invalid email format returns 422 validation error (NOT 500). (4) POST /api/auth/reset-password with valid token + new_password 'TempPass@999' returns 200 {ok:true, message}. (5) Reusing same token returns 400 'This reset link is invalid or has already been used' (NOT 200, NOT 500). (6) Garbage token 'garbage-token-123456789' returns 400 (NOT 500). (7) Short password (< 8 chars) returns 422 validation error (NOT 500). (8) Login with NEW password returns 200 with token. (9) Login with OLD password returns 401 (correctly rejected). (10) CLEANUP COMPLETE: Admin password restored to Admin@12345 and verified working. Test file: /app/backend_test.py"
+  - task: "Phase-1 Wellness: mood journal, gratitude jar, badges"
+    implemented: true
+    working: true
+    file: "backend/server.py, backend/models.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        -working: "NA"
+        -agent: "main"
+        -comment: "New endpoints requiring Plus subscription: POST /api/wellness/mood (mood 1-5, ge/le validated → 422 out of range, upserts one entry per day), GET /api/wellness/mood/trends?days=30 (returns {series,average,count,today}), POST /api/wellness/gratitude (text min_length=1 → 422 if empty), GET /api/wellness/gratitude (returns {items,count}), GET /api/wellness/gratitude/random (returns {item}), DELETE /api/wellness/gratitude/{id} (returns {ok:true}), GET /api/wellness/badges (returns 6 badges with id,label,icon,metric,threshold,value,earned,progress fields)."
+        -working: true
+        -agent: "testing"
+        -comment: "VERIFIED ALL 15 TEST SCENARIOS: (1) POST /api/wellness/mood with {mood:4, note:'good day'} returns 200 with mood=4 and id. (2) mood=0 returns 422 validation error (NOT 500). (3) mood=6 returns 422 validation error (NOT 500). (4) UPSERT VERIFIED: Logging mood=2 for today updates existing entry (not duplicate). (5) GET /api/wellness/mood/trends?days=30 returns 200 with {series:[...], average:2.0, count:1, today:{mood:2}} confirming UPSERT behavior. (6) POST /api/wellness/gratitude with {text:'morning coffee'} returns 200 with {id, text, created_at}. (7) Empty text '' returns 422 validation error (NOT 500). (8) GET /api/wellness/gratitude returns 200 with {items:[...], count:2} containing added item. (9) GET /api/wellness/gratitude/random returns 200 with {item:<obj>} (non-null). (10) DELETE /api/wellness/gratitude/{id} returns 200 with {ok:true}. (11) GET /api/wellness/gratitude confirms deleted item no longer in list. (12) GET /api/wellness/badges returns 200 with {badges:[6 items], earned_count:1}. (13) All badges have required fields: id, label, icon, metric, threshold, value, earned, progress. (14) 'mood_tracker' and 'grateful_heart' badges exist. (15) Auth guard: POST /api/wellness/mood without Authorization header returns 401 (NOT 500). All endpoints require Plus subscription (admin already has Plus trialing). Test file: /app/backend_test.py"
 
 metadata:
   created_by: "main_agent"
-  version: "1.7"
-  test_sequence: 8
+  version: "1.8"
+  test_sequence: 9
   run_ui: false
 
 test_plan:
@@ -258,6 +272,10 @@ test_plan:
   test_priority: "high_first"
 
 new_backend_tasks:
+  - task: "Phase 1 Wellness: mood journal, gratitude jar, badges"
+    file: "backend/server.py, backend/models.py"
+    endpoints: "POST /api/wellness/mood, GET /api/wellness/mood/trends, POST/GET/DELETE /api/wellness/gratitude, GET /api/wellness/gratitude/random, GET /api/wellness/badges"
+    notes: "All require Plus. mood upserts one entry per day (mood 1-5, ge/le validated → 422 out of range). trends?days=30 returns {series,average,count,today}. gratitude add/list/delete + random. badges derives 6 badges from best_streak/days_active/mood_count/gratitude_count with earned+progress."
   - task: "Password reset (forgot + reset)"
     file: "backend/server.py, backend/models.py"
     endpoints: "POST /api/auth/forgot-password, POST /api/auth/reset-password"
@@ -309,5 +327,9 @@ agent_communication:
 agent_communication:
     -agent: "testing"
     -message: "✅ PASSWORD RESET ENDPOINTS - ALL 10 TESTS PASSED. (1) POST /api/auth/forgot-password with registered email returns 200 with dev_reset_link + email_configured:false (RESEND_API_KEY empty). (2) SECURITY VERIFIED: Unknown email returns 200 with same generic message but NO dev_reset_link (no email-existence leak). (3) Invalid email format returns 422 validation (NOT 500). (4) POST /api/auth/reset-password with valid token returns 200. (5) Reusing token returns 400 'invalid or has already been used' (NOT 200/500). (6) Garbage token returns 400 (NOT 500). (7) Short password (<8 chars) returns 422 validation (NOT 500). (8) Login with new password works (200 with token). (9) Login with old password fails (401). (10) CLEANUP COMPLETE: Admin password restored to Admin@12345 and verified. Test file: /app/backend_test.py. ALL REQUIREMENTS MET."
+
+agent_communication:
+    -agent: "testing"
+    -message: "✅ PHASE-1 WELLNESS ENDPOINTS - ALL 15 TESTS PASSED. (1) POST /api/wellness/mood with {mood:4, note:'good day'} returns 200 with mood=4 and id. (2) mood=0 returns 422 validation error (NOT 500). (3) mood=6 returns 422 validation error (NOT 500). (4) UPSERT VERIFIED: Logging mood=2 for today updates existing entry (not duplicate). (5) GET /api/wellness/mood/trends?days=30 returns 200 with {series, average:2.0, count:1, today:{mood:2}} confirming UPSERT behavior. (6) POST /api/wellness/gratitude with {text:'morning coffee'} returns 200 with {id, text, created_at}. (7) Empty text '' returns 422 validation error (NOT 500). (8) GET /api/wellness/gratitude returns 200 with {items, count:2} containing added item. (9) GET /api/wellness/gratitude/random returns 200 with {item:<obj>} (non-null). (10) DELETE /api/wellness/gratitude/{id} returns 200 with {ok:true}. (11) GET /api/wellness/gratitude confirms deleted item no longer in list. (12) GET /api/wellness/badges returns 200 with {badges:[6 items], earned_count:1}. (13) All badges have required fields: id, label, icon, metric, threshold, value, earned, progress. (14) 'mood_tracker' and 'grateful_heart' badges exist. (15) Auth guard: POST /api/wellness/mood without Authorization header returns 401 (NOT 500). All endpoints require Plus subscription (admin already has Plus trialing). Test file: /app/backend_test.py. ALL REQUIREMENTS FROM REVIEW_REQUEST MET."
 
 #====================================================================================================

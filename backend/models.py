@@ -186,6 +186,16 @@ class ChatFeedback(BaseModel):
     rating: str = Field(pattern="^(up|down)$")
 
 
+class MoodInput(BaseModel):
+    mood: int = Field(ge=1, le=5)
+    note: Optional[str] = Field(default="", max_length=280)
+    date: Optional[str] = None
+
+
+class GratitudeInput(BaseModel):
+    text: str = Field(min_length=1, max_length=280)
+
+
 class PaypalActivate(BaseModel):
     subscription_id: str
     plan_key: str  # "monthly" | "yearly"

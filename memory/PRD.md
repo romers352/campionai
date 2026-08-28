@@ -82,3 +82,12 @@ A privacy-first, multimodal AI daily companion that feels like a trusted close f
 - [x] **AI Chat**: hover message actions (copy, regenerate last reply, thumbs up/down → `POST /api/chat/feedback`), tap-to-send starter prompts on empty state, floating scroll-to-bottom + smart auto-scroll, richer formatting (bullet lists + clickable links), sidebar "Talk to a doctor" link.
 - [x] **Wellness planning/to-dos**: add-your-own to-do (`POST /api/wellness/plan/item`), delete (`DELETE .../item/{i}`), reorder up/down (`PUT .../plan/reorder`), **streak** badge + 100%-complete celebration (`GET /api/wellness/streak`), food meal tagging + grouped-by-meal logs (`meal` on `POST /api/wellness/food`), food edit (`PUT /api/wellness/food/{fid}`).
 - [x] Backend: 27/27 new-endpoint tests passed (auth-gated, Plus-gated, validation 400/404/422). Frontend compiled successfully.
+
+## 20-Feature Program (2026-08-28)
+Phased build of 20 requested features. Phase 1 shipped:
+- [x] **Phase 1 — Wellness pack** (5/20): Mood journal + 30-day trend graph (`POST /api/wellness/mood`, `GET /api/wellness/mood/trends`, upsert 1/day), Gratitude jar (`POST/GET/DELETE /api/wellness/gratitude`, `/random`), Guided breathing player (frontend `BreathingPlayer.js`, box-breathing animation), Daily mood check-in (5-emoji picker), Habit badges (`GET /api/wellness/badges`, 6 derived badges + progress). New Wellness tabs: Mood, Breathe, Gratitude + badges strip. Backend 15/15 tests passed. Frontend compiled.
+- [ ] Phase 2 — Experience: light theme toggle, personality/tone quiz, export data PDF, private chats
+- [ ] Phase 3 — Chat: mood-aware replies, pin-to-memory, conversation summaries
+- [ ] Phase 4 — Doctor: availability calendar, ratings & reviews, in-session notes, follow-ups
+- [ ] Phase 5 — Safety: crisis-mode redesign + local hotlines, trusted circle
+- [ ] Phase 6 — NEEDS KEYS: voice (Fish Audio), smart reminders

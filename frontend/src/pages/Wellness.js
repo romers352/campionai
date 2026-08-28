@@ -15,9 +15,19 @@ import {
   ArrowLeft, Sparkles, Check, RefreshCw, Utensils, CalendarClock, Plus, Trash2,
   Wind, Flower2, Activity, Brain, HeartHandshake, Loader2, Heart,
   Flame, ChevronUp, ChevronDown, PartyPopper,
+  Smile, Meh, Frown, Sprout, Medal, Trophy, Quote,
 } from "lucide-react";
+import BreathingPlayer from "@/components/BreathingPlayer";
 
 const MEALS = ["breakfast", "lunch", "dinner", "snack"];
+const BADGE_ICON = { sprout: Sprout, flame: Flame, medal: Medal, trophy: Trophy, heart: Heart, smile: Smile };
+const MOODS = [
+  { v: 1, label: "Rough", Icon: Frown },
+  { v: 2, label: "Low", Icon: Frown },
+  { v: 3, label: "Okay", Icon: Meh },
+  { v: 4, label: "Good", Icon: Smile },
+  { v: 5, label: "Great", Icon: Smile },
+];
 
 const TYPE_ICON = { breathing: Wind, yoga: Flower2, movement: Activity, meditation: Brain, task: HeartHandshake };
 const MACRO_TARGETS = { protein_g: 120, carbs_g: 250, fat_g: 70 };
@@ -265,6 +275,11 @@ export default function Wellness() {
   const [streak, setStreak] = useState({ current: 0, best: 0 });
   const [newTodo, setNewTodo] = useState("");
   const [meal, setMeal] = useState("breakfast");
+  const [trends, setTrends] = useState({ series: [], average: null, today: null });
+  const [moodNote, setMoodNote] = useState("");
+  const [gratitude, setGratitude] = useState({ items: [] });
+  const [gratInput, setGratInput] = useState("");
+  const [badges, setBadges] = useState({ badges: [], earned_count: 0 });
 
   const name = user?.profile?.preferred_name || "friend";
 
@@ -275,6 +290,14 @@ export default function Wellness() {
   const loadStreak = async () => {
     try { const { data } = await api.get("/wellness/streak"); setStreak(data); } catch { /* best-effort */ }
   };
+  const loadExtras = async () => {
+    try {
+      const [t, g, b] = await Promise.all([
+        api.get("/wellness/mood/trends?days=30"), api.get("/wellness/gratitude"), api.get("/wellness/badges"),
+      ]);
+      setTrends(t.data); setGratitude(g.data); setBadges(b.data);
+    } catch { /* best-effort */ }
+  };
   const loadPlusData = async () => {
     const today = new Date().toISOString().slice(0, 10);
     try {
@@ -283,9 +306,30 @@ export default function Wellness() {
       ]);
       setPlan(p.data); setFood(f.data); setEvents(e.data);
       loadStreak();
+      loadExtras();
     } catch {
       toast.error("Couldn't load your plan — please try again in a moment");
     }
+  };
+
+  const logMood = async (mood) => {
+    try {
+      await api.post("/wellness/mood", { mood, note: moodNote });
+      setMoodNote("");
+      toast.success("Mood logged — thanks for checking in");
+      loadExtras();
+    } catch { toast.error("Couldn't log that"); }
+  };
+  const addGratitude = async () => {
+    if (!gratInput.trim()) return;
+    try {
+      await api.post("/wellness/gratitude", { text: gratInput.trim() });
+      setGratInput("");
+      loadExtras();
+    } catch { toast.error("Couldn't add that"); }
+  };
+  const delGratitude = async (gid) => {
+    try { await api.delete(`/wellness/gratitude/${gid}`); loadExtras(); } catch { /* noop */ }
   };
 
   useEffect(() => { loadStatus().then((s) => { if (s.active) loadPlusData(); }); }, []);
@@ -418,9 +462,30 @@ export default function Wellness() {
           </div>
         </motion.div>
 
+        {/* Badges strip */}
+        {badges.badges.length > 0 && (
+          <div className="flex items-center gap-2 mb-8 overflow-x-auto pb-1" data-testid="badges-strip">
+            {badges.badges.map((b) => {
+              const Icon = BADGE_ICON[b.icon] || Sparkles;
+              return (
+                <div key={b.id} title={b.earned ? `Earned: ${b.label}` : `${b.value}/${b.threshold} · ${b.label}`}
+                  className={`shrink-0 flex items-center gap-2 rounded-full border px-3 py-1.5 transition-colors ${b.earned ? "border-amber-400/40 bg-amber-400/[0.06] text-amber-300/90" : "border-border text-muted-foreground/60"}`}
+                  data-testid={`badge-${b.id}`}>
+                  <Icon className="h-3.5 w-3.5" strokeWidth={1.5} />
+                  <span className="text-[11px] tracking-[0.04em] whitespace-nowrap">{b.label}</span>
+                  {!b.earned && <span className="text-[10px] font-mono-data opacity-70">{b.value}/{b.threshold}</span>}
+                </div>
+              );
+            })}
+          </div>
+        )}
+
         <Tabs defaultValue="plan">
-          <TabsList className="rounded-full">
+          <TabsList className="rounded-full flex-wrap h-auto">
             <TabsTrigger value="plan" className="rounded-full" data-testid="wellness-tab-plan">Today's plan</TabsTrigger>
+            <TabsTrigger value="mood" className="rounded-full" data-testid="wellness-tab-mood">Mood</TabsTrigger>
+            <TabsTrigger value="breathe" className="rounded-full" data-testid="wellness-tab-breathe">Breathe</TabsTrigger>
+            <TabsTrigger value="gratitude" className="rounded-full" data-testid="wellness-tab-gratitude">Gratitude</TabsTrigger>
             <TabsTrigger value="food" className="rounded-full" data-testid="wellness-tab-food">Food</TabsTrigger>
             <TabsTrigger value="schedule" className="rounded-full" data-testid="wellness-tab-schedule">Schedule</TabsTrigger>
           </TabsList>
@@ -550,6 +615,76 @@ export default function Wellness() {
           </TabsContent>
 
           {/* SCHEDULE */}
+          <TabsContent value="mood" className="mt-8">
+            <h2 className="font-display font-light text-2xl mb-2 flex items-center gap-2"><Smile className="h-5 w-5 text-muted-foreground" /> How are you, really?</h2>
+            <p className="text-muted-foreground mb-6">One tap a day. Over time it becomes a gentle picture of how you've been.</p>
+
+            <div className="grid grid-cols-5 gap-2 mb-4" data-testid="mood-picker">
+              {MOODS.map(({ v, label, Icon }) => {
+                const active = trends.today?.mood === v;
+                return (
+                  <button key={v} onClick={() => logMood(v)} data-testid={`mood-${v}`}
+                    className={`rounded-2xl border p-4 flex flex-col items-center gap-2 transition-all ${active ? "border-foreground bg-accent" : "border-border bg-card/40 hover:border-foreground/40"}`}>
+                    <Icon className={`h-6 w-6 ${v <= 2 ? "text-rose-300/80" : v === 3 ? "text-amber-300/80" : "text-emerald-300/80"}`} strokeWidth={1.5} />
+                    <span className="text-xs text-muted-foreground">{label}</span>
+                  </button>
+                );
+              })}
+            </div>
+            <Input className="rounded-full h-11 mb-8" placeholder="Add a note (optional) — what's behind the feeling?"
+              value={moodNote} onChange={(e) => setMoodNote(e.target.value)} data-testid="mood-note-input" />
+
+            {/* Trend graph */}
+            <div className="rounded-2xl border border-border bg-card/40 p-6" data-testid="mood-trends">
+              <div className="flex items-center justify-between mb-6">
+                <p className="text-sm text-muted-foreground">Last 30 days</p>
+                {trends.average != null && <p className="text-sm">Average <span className="font-display text-lg">{trends.average}</span><span className="text-muted-foreground">/5</span></p>}
+              </div>
+              {trends.series.length === 0 ? (
+                <p className="text-sm text-muted-foreground py-6 text-center">No moods logged yet — tap one above to begin.</p>
+              ) : (
+                <div className="flex items-end gap-1 h-32">
+                  {trends.series.map((r) => (
+                    <div key={r.date} className="flex-1 flex flex-col justify-end group relative" title={`${r.date}: ${r.mood}/5`}>
+                      <div className={`rounded-t-md transition-all ${r.mood <= 2 ? "bg-rose-300/50" : r.mood === 3 ? "bg-amber-300/50" : "bg-emerald-300/60"} group-hover:opacity-80`}
+                        style={{ height: `${(r.mood / 5) * 100}%`, minHeight: "6px" }} data-testid="mood-bar" />
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </TabsContent>
+
+          <TabsContent value="breathe" className="mt-8">
+            <h2 className="font-display font-light text-2xl mb-2 flex items-center gap-2"><Wind className="h-5 w-5 text-muted-foreground" /> Take a breath</h2>
+            <p className="text-muted-foreground mb-2">A minute of slow breathing settles the nervous system. Follow the circle.</p>
+            <BreathingPlayer />
+          </TabsContent>
+
+          <TabsContent value="gratitude" className="mt-8">
+            <h2 className="font-display font-light text-2xl mb-2 flex items-center gap-2"><Heart className="h-5 w-5 text-muted-foreground" /> Gratitude jar</h2>
+            <p className="text-muted-foreground mb-6">Drop in the small good things. On a hard day, they're here waiting.</p>
+            <div className="flex gap-2 mb-8">
+              <Input className="rounded-full h-11" placeholder="Something good, however tiny…" value={gratInput}
+                onChange={(e) => setGratInput(e.target.value)} onKeyDown={(e) => e.key === "Enter" && addGratitude()} data-testid="gratitude-input" />
+              <Button size="icon" className="rounded-full bg-primary text-primary-foreground hover:bg-zinc-200 shrink-0" onClick={addGratitude} data-testid="add-gratitude-button"><Plus className="h-4 w-4" /></Button>
+            </div>
+            {gratitude.items.length === 0 ? (
+              <p className="text-sm text-muted-foreground rounded-2xl border border-border bg-card/30 p-5">Your jar is empty — add your first good moment above.</p>
+            ) : (
+              <div className="grid sm:grid-cols-2 gap-3" data-testid="gratitude-list">
+                {gratitude.items.map((g) => (
+                  <motion.div key={g.id} initial={{ opacity: 0, scale: 0.97 }} animate={{ opacity: 1, scale: 1 }}
+                    className="group relative rounded-2xl border border-border bg-card/50 p-5" data-testid={`gratitude-${g.id}`}>
+                    <Quote className="h-4 w-4 text-muted-foreground/50 mb-2" />
+                    <p className="text-sm leading-relaxed">{g.text}</p>
+                    <button onClick={() => delGratitude(g.id)} className="absolute top-3 right-3 text-muted-foreground hover:text-escalation opacity-0 group-hover:opacity-100 transition-opacity"><Trash2 className="h-3.5 w-3.5" /></button>
+                  </motion.div>
+                ))}
+              </div>
+            )}
+          </TabsContent>
+
           <TabsContent value="schedule" className="mt-8">
             <h2 className="font-display font-light text-2xl mb-2 flex items-center gap-2"><CalendarClock className="h-5 w-5 text-muted-foreground" /> Today's schedule</h2>
             <p className="text-muted-foreground mb-6">Give your intentions a time. Small commitments, kept.</p>

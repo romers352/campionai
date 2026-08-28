@@ -524,6 +524,404 @@ def main():
         print(f"{RED}✗ SOME TESTS FAILED{RESET}")
         return False
 
+def test_wellness_endpoints():
+    """
+    Comprehensive test suite for Phase-1 Wellness endpoints:
+    - POST /api/wellness/mood (with validation and UPSERT)
+    - GET /api/wellness/mood/trends
+    - POST/GET/DELETE /api/wellness/gratitude
+    - GET /api/wellness/gratitude/random
+    - GET /api/wellness/badges
+    - Auth guard testing
+    """
+    print(f"\n{BLUE}{'='*70}{RESET}")
+    print(f"{BLUE}PHASE-1 WELLNESS ENDPOINTS TEST SUITE{RESET}")
+    print(f"{BLUE}{'='*70}{RESET}")
+    
+    results = []
+    
+    # Step 1: Login as admin
+    log_test("Login as admin")
+    login_url = f"{BASE_URL}/auth/login"
+    login_payload = {"email": ADMIN_EMAIL, "password": ADMIN_PASSWORD}
+    
+    try:
+        resp = requests.post(login_url, json=login_payload, timeout=10)
+        if resp.status_code == 200:
+            data = resp.json()
+            token = data.get("token")
+            if token:
+                log_pass(f"Login successful, got token")
+                results.append(("Admin login", True))
+            else:
+                log_fail("No token in response")
+                results.append(("Admin login", False))
+                return False
+        else:
+            log_fail(f"Login failed with status {resp.status_code}: {resp.text}")
+            results.append(("Admin login", False))
+            return False
+    except Exception as e:
+        log_fail(f"Login exception: {e}")
+        results.append(("Admin login", False))
+        return False
+    
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json"
+    }
+    
+    # Step 2: Ensure Plus subscription (start trial if needed)
+    log_test("Ensure Plus subscription")
+    try:
+        # Check Plus status first
+        plus_status_resp = requests.get(f"{BASE_URL}/plus/status", headers=headers, timeout=10)
+        if plus_status_resp.status_code == 200:
+            plus_data = plus_status_resp.json()
+            if not plus_data.get("active"):
+                log_info("Plus not active, starting trial...")
+                trial_resp = requests.post(f"{BASE_URL}/plus/start-trial", headers=headers, timeout=10)
+                if trial_resp.status_code == 200:
+                    log_pass("Plus trial started successfully")
+                    results.append(("Start Plus trial", True))
+                else:
+                    log_fail(f"Failed to start trial: {trial_resp.status_code} - {trial_resp.text}")
+                    results.append(("Start Plus trial", False))
+            else:
+                log_pass("Plus already active")
+                results.append(("Plus subscription check", True))
+        else:
+            log_fail(f"Failed to check Plus status: {plus_status_resp.status_code}")
+            results.append(("Plus subscription check", False))
+    except Exception as e:
+        log_fail(f"Plus subscription check exception: {e}")
+        results.append(("Plus subscription check", False))
+    
+    # Test 1: POST /api/wellness/mood - Valid mood (mood=4)
+    log_test("POST /api/wellness/mood - Valid mood (mood=4)")
+    try:
+        mood_payload = {"mood": 4, "note": "good day"}
+        resp = requests.post(f"{BASE_URL}/wellness/mood", json=mood_payload, headers=headers, timeout=10)
+        if resp.status_code == 200:
+            data = resp.json()
+            if data.get("mood") == 4 and "id" in data:
+                log_pass(f"Mood logged successfully: mood={data.get('mood')}, note={data.get('note')}")
+                results.append(("POST /api/wellness/mood (valid mood=4)", True))
+            else:
+                log_fail(f"Response missing expected fields: {data}")
+                results.append(("POST /api/wellness/mood (valid mood=4)", False))
+        else:
+            log_fail(f"Status {resp.status_code}: {resp.text}")
+            results.append(("POST /api/wellness/mood (valid mood=4)", False))
+    except Exception as e:
+        log_fail(f"Exception: {e}")
+        results.append(("POST /api/wellness/mood (valid mood=4)", False))
+    
+    # Test 2: POST /api/wellness/mood - Out of range (mood=0) should return 422
+    log_test("POST /api/wellness/mood - Out of range (mood=0) → 422")
+    try:
+        mood_payload = {"mood": 0, "note": "invalid"}
+        resp = requests.post(f"{BASE_URL}/wellness/mood", json=mood_payload, headers=headers, timeout=10)
+        if resp.status_code == 422:
+            log_pass(f"Correctly rejected mood=0 with 422 validation error")
+            results.append(("POST /api/wellness/mood (mood=0 → 422)", True))
+        elif resp.status_code == 500:
+            log_fail(f"Got 500 error (should be 422): {resp.text}")
+            results.append(("POST /api/wellness/mood (mood=0 → 422)", False))
+        else:
+            log_fail(f"Unexpected status {resp.status_code}: {resp.text}")
+            results.append(("POST /api/wellness/mood (mood=0 → 422)", False))
+    except Exception as e:
+        log_fail(f"Exception: {e}")
+        results.append(("POST /api/wellness/mood (mood=0 → 422)", False))
+    
+    # Test 3: POST /api/wellness/mood - Out of range (mood=6) should return 422
+    log_test("POST /api/wellness/mood - Out of range (mood=6) → 422")
+    try:
+        mood_payload = {"mood": 6, "note": "invalid"}
+        resp = requests.post(f"{BASE_URL}/wellness/mood", json=mood_payload, headers=headers, timeout=10)
+        if resp.status_code == 422:
+            log_pass(f"Correctly rejected mood=6 with 422 validation error")
+            results.append(("POST /api/wellness/mood (mood=6 → 422)", True))
+        elif resp.status_code == 500:
+            log_fail(f"Got 500 error (should be 422): {resp.text}")
+            results.append(("POST /api/wellness/mood (mood=6 → 422)", False))
+        else:
+            log_fail(f"Unexpected status {resp.status_code}: {resp.text}")
+            results.append(("POST /api/wellness/mood (mood=6 → 422)", False))
+    except Exception as e:
+        log_fail(f"Exception: {e}")
+        results.append(("POST /api/wellness/mood (mood=6 → 422)", False))
+    
+    # Test 4: POST /api/wellness/mood - UPSERT behavior (log again with mood=2)
+    log_test("POST /api/wellness/mood - UPSERT behavior (mood=2 for today)")
+    try:
+        mood_payload = {"mood": 2, "note": "updated mood"}
+        resp = requests.post(f"{BASE_URL}/wellness/mood", json=mood_payload, headers=headers, timeout=10)
+        if resp.status_code == 200:
+            data = resp.json()
+            if data.get("mood") == 2:
+                log_pass(f"Mood updated successfully: mood={data.get('mood')}")
+                results.append(("POST /api/wellness/mood (UPSERT mood=2)", True))
+            else:
+                log_fail(f"Mood not updated correctly: {data}")
+                results.append(("POST /api/wellness/mood (UPSERT mood=2)", False))
+        else:
+            log_fail(f"Status {resp.status_code}: {resp.text}")
+            results.append(("POST /api/wellness/mood (UPSERT mood=2)", False))
+    except Exception as e:
+        log_fail(f"Exception: {e}")
+        results.append(("POST /api/wellness/mood (UPSERT mood=2)", False))
+    
+    # Test 5: GET /api/wellness/mood/trends - Verify UPSERT (today's mood should be 2)
+    log_test("GET /api/wellness/mood/trends?days=30 - Verify UPSERT")
+    try:
+        resp = requests.get(f"{BASE_URL}/wellness/mood/trends?days=30", headers=headers, timeout=10)
+        if resp.status_code == 200:
+            data = resp.json()
+            if "series" in data and "average" in data and "count" in data and "today" in data:
+                count = data.get("count")
+                today = data.get("today")
+                if count >= 1:
+                    log_pass(f"Trends returned: count={count}, average={data.get('average')}")
+                    if today and today.get("mood") == 2:
+                        log_pass(f"UPSERT verified: today's mood is 2 (not duplicate)")
+                        results.append(("GET /api/wellness/mood/trends (UPSERT verified)", True))
+                    else:
+                        log_fail(f"Today's mood is not 2: {today}")
+                        results.append(("GET /api/wellness/mood/trends (UPSERT verified)", False))
+                else:
+                    log_fail(f"Count is {count}, expected >= 1")
+                    results.append(("GET /api/wellness/mood/trends (UPSERT verified)", False))
+            else:
+                log_fail(f"Response missing expected fields: {data}")
+                results.append(("GET /api/wellness/mood/trends (UPSERT verified)", False))
+        else:
+            log_fail(f"Status {resp.status_code}: {resp.text}")
+            results.append(("GET /api/wellness/mood/trends (UPSERT verified)", False))
+    except Exception as e:
+        log_fail(f"Exception: {e}")
+        results.append(("GET /api/wellness/mood/trends (UPSERT verified)", False))
+    
+    # Test 6: POST /api/wellness/gratitude - Valid text
+    log_test("POST /api/wellness/gratitude - Valid text")
+    gratitude_id = None
+    try:
+        gratitude_payload = {"text": "morning coffee"}
+        resp = requests.post(f"{BASE_URL}/wellness/gratitude", json=gratitude_payload, headers=headers, timeout=10)
+        if resp.status_code == 200:
+            data = resp.json()
+            if "id" in data and "text" in data and "created_at" in data:
+                gratitude_id = data.get("id")
+                log_pass(f"Gratitude added: id={gratitude_id}, text={data.get('text')}")
+                results.append(("POST /api/wellness/gratitude (valid text)", True))
+            else:
+                log_fail(f"Response missing expected fields: {data}")
+                results.append(("POST /api/wellness/gratitude (valid text)", False))
+        else:
+            log_fail(f"Status {resp.status_code}: {resp.text}")
+            results.append(("POST /api/wellness/gratitude (valid text)", False))
+    except Exception as e:
+        log_fail(f"Exception: {e}")
+        results.append(("POST /api/wellness/gratitude (valid text)", False))
+    
+    # Test 7: POST /api/wellness/gratitude - Empty text should return 422
+    log_test("POST /api/wellness/gratitude - Empty text → 422")
+    try:
+        gratitude_payload = {"text": ""}
+        resp = requests.post(f"{BASE_URL}/wellness/gratitude", json=gratitude_payload, headers=headers, timeout=10)
+        if resp.status_code == 422:
+            log_pass(f"Correctly rejected empty text with 422 validation error")
+            results.append(("POST /api/wellness/gratitude (empty text → 422)", True))
+        elif resp.status_code == 500:
+            log_fail(f"Got 500 error (should be 422): {resp.text}")
+            results.append(("POST /api/wellness/gratitude (empty text → 422)", False))
+        else:
+            log_fail(f"Unexpected status {resp.status_code}: {resp.text}")
+            results.append(("POST /api/wellness/gratitude (empty text → 422)", False))
+    except Exception as e:
+        log_fail(f"Exception: {e}")
+        results.append(("POST /api/wellness/gratitude (empty text → 422)", False))
+    
+    # Test 8: GET /api/wellness/gratitude - List gratitude entries
+    log_test("GET /api/wellness/gratitude - List entries")
+    try:
+        resp = requests.get(f"{BASE_URL}/wellness/gratitude", headers=headers, timeout=10)
+        if resp.status_code == 200:
+            data = resp.json()
+            if "items" in data and "count" in data:
+                items = data.get("items", [])
+                count = data.get("count")
+                if gratitude_id and any(item.get("id") == gratitude_id for item in items):
+                    log_pass(f"Gratitude list returned: count={count}, added item present")
+                    results.append(("GET /api/wellness/gratitude (list)", True))
+                else:
+                    log_fail(f"Added gratitude item not found in list")
+                    results.append(("GET /api/wellness/gratitude (list)", False))
+            else:
+                log_fail(f"Response missing expected fields: {data}")
+                results.append(("GET /api/wellness/gratitude (list)", False))
+        else:
+            log_fail(f"Status {resp.status_code}: {resp.text}")
+            results.append(("GET /api/wellness/gratitude (list)", False))
+    except Exception as e:
+        log_fail(f"Exception: {e}")
+        results.append(("GET /api/wellness/gratitude (list)", False))
+    
+    # Test 9: GET /api/wellness/gratitude/random - Get random entry
+    log_test("GET /api/wellness/gratitude/random - Get random entry")
+    try:
+        resp = requests.get(f"{BASE_URL}/wellness/gratitude/random", headers=headers, timeout=10)
+        if resp.status_code == 200:
+            data = resp.json()
+            if "item" in data:
+                item = data.get("item")
+                if item is not None:
+                    log_pass(f"Random gratitude returned: {item.get('text', 'N/A')}")
+                    results.append(("GET /api/wellness/gratitude/random", True))
+                else:
+                    log_fail(f"Random item is null (expected non-null after adding one)")
+                    results.append(("GET /api/wellness/gratitude/random", False))
+            else:
+                log_fail(f"Response missing 'item' field: {data}")
+                results.append(("GET /api/wellness/gratitude/random", False))
+        else:
+            log_fail(f"Status {resp.status_code}: {resp.text}")
+            results.append(("GET /api/wellness/gratitude/random", False))
+    except Exception as e:
+        log_fail(f"Exception: {e}")
+        results.append(("GET /api/wellness/gratitude/random", False))
+    
+    # Test 10: DELETE /api/wellness/gratitude/{id} - Delete entry
+    log_test(f"DELETE /api/wellness/gratitude/{gratitude_id} - Delete entry")
+    if gratitude_id:
+        try:
+            resp = requests.delete(f"{BASE_URL}/wellness/gratitude/{gratitude_id}", headers=headers, timeout=10)
+            if resp.status_code == 200:
+                data = resp.json()
+                if data.get("ok") is True:
+                    log_pass(f"Gratitude deleted successfully")
+                    results.append(("DELETE /api/wellness/gratitude/{id}", True))
+                else:
+                    log_fail(f"Response missing 'ok: true': {data}")
+                    results.append(("DELETE /api/wellness/gratitude/{id}", False))
+            else:
+                log_fail(f"Status {resp.status_code}: {resp.text}")
+                results.append(("DELETE /api/wellness/gratitude/{id}", False))
+        except Exception as e:
+            log_fail(f"Exception: {e}")
+            results.append(("DELETE /api/wellness/gratitude/{id}", False))
+    else:
+        log_fail("No gratitude_id to delete")
+        results.append(("DELETE /api/wellness/gratitude/{id}", False))
+    
+    # Test 11: GET /api/wellness/gratitude - Verify deletion
+    log_test("GET /api/wellness/gratitude - Verify deletion")
+    try:
+        resp = requests.get(f"{BASE_URL}/wellness/gratitude", headers=headers, timeout=10)
+        if resp.status_code == 200:
+            data = resp.json()
+            items = data.get("items", [])
+            if gratitude_id and not any(item.get("id") == gratitude_id for item in items):
+                log_pass(f"Deleted gratitude item no longer in list")
+                results.append(("GET /api/wellness/gratitude (verify deletion)", True))
+            elif not gratitude_id:
+                log_fail("No gratitude_id to verify deletion")
+                results.append(("GET /api/wellness/gratitude (verify deletion)", False))
+            else:
+                log_fail(f"Deleted gratitude item still in list")
+                results.append(("GET /api/wellness/gratitude (verify deletion)", False))
+        else:
+            log_fail(f"Status {resp.status_code}: {resp.text}")
+            results.append(("GET /api/wellness/gratitude (verify deletion)", False))
+    except Exception as e:
+        log_fail(f"Exception: {e}")
+        results.append(("GET /api/wellness/gratitude (verify deletion)", False))
+    
+    # Test 12: GET /api/wellness/badges - Verify structure
+    log_test("GET /api/wellness/badges - Verify structure")
+    try:
+        resp = requests.get(f"{BASE_URL}/wellness/badges", headers=headers, timeout=10)
+        if resp.status_code == 200:
+            data = resp.json()
+            if "badges" in data and "earned_count" in data:
+                badges = data.get("badges", [])
+                earned_count = data.get("earned_count")
+                if len(badges) == 6:
+                    log_pass(f"Badges returned: 6 items, earned_count={earned_count}")
+                    # Verify structure of each badge
+                    required_fields = ["id", "label", "icon", "metric", "threshold", "value", "earned", "progress"]
+                    all_valid = True
+                    for badge in badges:
+                        if not all(field in badge for field in required_fields):
+                            log_fail(f"Badge missing required fields: {badge}")
+                            all_valid = False
+                            break
+                    if all_valid:
+                        log_pass(f"All badges have required fields: {', '.join(required_fields)}")
+                        # Verify specific badges exist
+                        badge_ids = [b.get("id") for b in badges]
+                        if "mood_tracker" in badge_ids and "grateful_heart" in badge_ids:
+                            log_pass(f"'mood_tracker' and 'grateful_heart' badges exist")
+                            results.append(("GET /api/wellness/badges (structure)", True))
+                        else:
+                            log_fail(f"Missing 'mood_tracker' or 'grateful_heart' badge. Found: {badge_ids}")
+                            results.append(("GET /api/wellness/badges (structure)", False))
+                    else:
+                        results.append(("GET /api/wellness/badges (structure)", False))
+                else:
+                    log_fail(f"Expected 6 badges, got {len(badges)}")
+                    results.append(("GET /api/wellness/badges (structure)", False))
+            else:
+                log_fail(f"Response missing expected fields: {data}")
+                results.append(("GET /api/wellness/badges (structure)", False))
+        else:
+            log_fail(f"Status {resp.status_code}: {resp.text}")
+            results.append(("GET /api/wellness/badges (structure)", False))
+    except Exception as e:
+        log_fail(f"Exception: {e}")
+        results.append(("GET /api/wellness/badges (structure)", False))
+    
+    # Test 13: Auth guard - POST /api/wellness/mood without Authorization header
+    log_test("POST /api/wellness/mood - No Authorization header → 401/403")
+    try:
+        mood_payload = {"mood": 3, "note": "test"}
+        resp = requests.post(f"{BASE_URL}/wellness/mood", json=mood_payload, timeout=10)
+        if resp.status_code in [401, 403]:
+            log_pass(f"Correctly rejected with {resp.status_code} (auth required)")
+            results.append(("POST /api/wellness/mood (no auth → 401/403)", True))
+        elif resp.status_code == 500:
+            log_fail(f"Got 500 error (should be 401/403): {resp.text}")
+            results.append(("POST /api/wellness/mood (no auth → 401/403)", False))
+        else:
+            log_fail(f"Unexpected status {resp.status_code}: {resp.text}")
+            results.append(("POST /api/wellness/mood (no auth → 401/403)", False))
+    except Exception as e:
+        log_fail(f"Exception: {e}")
+        results.append(("POST /api/wellness/mood (no auth → 401/403)", False))
+    
+    # Summary
+    print(f"\n{BLUE}{'='*70}{RESET}")
+    print(f"{BLUE}WELLNESS ENDPOINTS TEST SUMMARY{RESET}")
+    print(f"{BLUE}{'='*70}{RESET}")
+    
+    passed = sum(1 for _, r in results if r)
+    total = len(results)
+    
+    for name, result in results:
+        status = f"{GREEN}PASS{RESET}" if result else f"{RED}FAIL{RESET}"
+        print(f"{status} - {name}")
+    
+    print(f"\n{BLUE}Total: {passed}/{total} tests passed{RESET}")
+    
+    if passed == total:
+        print(f"{GREEN}✓ ALL WELLNESS TESTS PASSED{RESET}")
+        return True
+    else:
+        print(f"{RED}✗ SOME WELLNESS TESTS FAILED{RESET}")
+        return False
+
 if __name__ == "__main__":
-    success = main()
+    # Run wellness tests
+    success = test_wellness_endpoints()
     sys.exit(0 if success else 1)

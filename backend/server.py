@@ -23,7 +23,7 @@ from models import (
     SessionCreate, MemoryUpdate, ModelRouteConfig,
     ProviderSettings, PrivateModeInput, VoiceSettingsInput, TTSInput,
     FoodInput, FoodEdit, EventInput, PlanItemToggle, PlanItemAdd, PlanReorder,
-    ChatFeedback, PaypalActivate, DonationOrder,
+    ChatFeedback, MoodInput, GratitudeInput, PaypalActivate, DonationOrder,
     GoogleSessionInput, ForgotPasswordInput, ResetPasswordInput, ContactInput, now_iso, new_id,
 )
 from auth import (
@@ -1624,6 +1624,97 @@ async def chat_feedback(inp: ChatFeedback, user=Depends(get_current_user)):
         "content": (inp.content or "")[:2000], "rating": inp.rating, "created_at": now_iso(),
     })
     return {"ok": True}
+
+
+# ---------- Mood journal ----------
+@api.post("/wellness/mood")
+async def log_mood(inp: MoodInput, user=Depends(require_plus)):
+    """One mood entry per day — logging again updates today's."""
+    date_str = inp.date or datetime.now(timezone.utc).date().isoformat()
+    doc = {
+        "id": new_id(), "user_id": user["id"], "date": date_str,
+        "mood": inp.mood, "note": (inp.note or "")[:280], "created_at": now_iso(),
+    }
+    await db.mood_entries.update_one(
+        {"user_id": user["id"], "date": date_str},
+        {"$set": {"mood": inp.mood, "note": doc["note"], "updated_at": now_iso()},
+         "$setOnInsert": {"id": doc["id"], "user_id": user["id"], "date": date_str, "created_at": now_iso()}},
+        upsert=True,
+    )
+    return doc
+
+
+@api.get("/wellness/mood/trends")
+async def mood_trends(days: int = 30, user=Depends(require_plus)):
+    days = max(7, min(days, 90))
+    start = (datetime.now(timezone.utc).date() - timedelta(days=days - 1)).isoformat()
+    rows = await db.mood_entries.find(
+        {"user_id": user["id"], "date": {"$gte": start}}, {"_id": 0, "date": 1, "mood": 1, "note": 1}
+    ).sort("date", 1).to_list(200)
+    moods = [r["mood"] for r in rows]
+    avg = round(sum(moods) / len(moods), 1) if moods else None
+    today = datetime.now(timezone.utc).date().isoformat()
+    return {
+        "series": rows, "average": avg, "count": len(rows),
+        "today": next((r for r in rows if r["date"] == today), None),
+    }
+
+
+# ---------- Gratitude jar ----------
+@api.post("/wellness/gratitude")
+async def add_gratitude(inp: GratitudeInput, user=Depends(require_plus)):
+    doc = {"id": new_id(), "user_id": user["id"], "text": inp.text.strip()[:280], "created_at": now_iso()}
+    await db.gratitude.insert_one(dict(doc))
+    doc.pop("_id", None)
+    return doc
+
+
+@api.get("/wellness/gratitude")
+async def list_gratitude(user=Depends(require_plus)):
+    items = await db.gratitude.find({"user_id": user["id"]}, {"_id": 0}).sort("created_at", -1).to_list(100)
+    return {"items": items, "count": len(items)}
+
+
+@api.get("/wellness/gratitude/random")
+async def random_gratitude(user=Depends(require_plus)):
+    import random as _random
+    items = await db.gratitude.find({"user_id": user["id"]}, {"_id": 0}).to_list(200)
+    return {"item": _random.choice(items) if items else None}
+
+
+@api.delete("/wellness/gratitude/{gid}")
+async def delete_gratitude(gid: str, user=Depends(require_plus)):
+    await db.gratitude.delete_one({"id": gid, "user_id": user["id"]})
+    return {"ok": True}
+
+
+# ---------- Habit badges ----------
+BADGES = [
+    {"id": "first_step", "label": "First step", "icon": "sprout", "metric": "days_active", "threshold": 1},
+    {"id": "week_warrior", "label": "One week", "icon": "flame", "metric": "best_streak", "threshold": 7},
+    {"id": "month_strong", "label": "30 days", "icon": "medal", "metric": "best_streak", "threshold": 30},
+    {"id": "centurion", "label": "100 days", "icon": "trophy", "metric": "best_streak", "threshold": 100},
+    {"id": "grateful_heart", "label": "10 gratitudes", "icon": "heart", "metric": "gratitude_count", "threshold": 10},
+    {"id": "mood_tracker", "label": "14 moods logged", "icon": "smile", "metric": "mood_count", "threshold": 14},
+]
+
+
+@api.get("/wellness/badges")
+async def wellness_badges(user=Depends(require_plus)):
+    streak = await wellness_streak(user)  # reuse computed streak
+    mood_count = await db.mood_entries.count_documents({"user_id": user["id"]})
+    gratitude_count = await db.gratitude.count_documents({"user_id": user["id"]})
+    active_days = len(await db.wellness_plans.find({"user_id": user["id"]}, {"_id": 0, "date": 1}).to_list(400))
+    metrics = {
+        "best_streak": streak["best"], "days_active": active_days,
+        "mood_count": mood_count, "gratitude_count": gratitude_count,
+    }
+    out = []
+    for b in BADGES:
+        val = metrics.get(b["metric"], 0)
+        out.append({**b, "value": val, "earned": val >= b["threshold"],
+                    "progress": min(1.0, round(val / b["threshold"], 2))})
+    return {"badges": out, "earned_count": sum(1 for b in out if b["earned"])}
 
 
 @api.get("/")
