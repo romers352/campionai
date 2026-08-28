@@ -9,7 +9,7 @@ import json
 import uuid
 
 # Backend URL from frontend/.env
-BASE_URL = "https://footer-ui-enhance.preview.emergentagent.com/api"
+BASE_URL = "https://fix-it-features.preview.emergentagent.com/api"
 
 # Test credentials from review request
 ADMIN_EMAIL = "admin@campionai.com"
