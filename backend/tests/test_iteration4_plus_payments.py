@@ -224,7 +224,7 @@ class TestPayments:
     @pytest.mark.parametrize("pkg,amount", [("plus_monthly", 9.0), ("plus_yearly", 86.40), ("donate_15", 15.0)])
     def test_checkout_creates_stripe_session(self, client, free_user, pkg, amount):
         r = client.post(f"{API}/payments/checkout",
-                        json={"package_id": pkg, "origin_url": "https://fervent-carver-8.preview.emergentagent.com"},
+                        json={"package_id": pkg, "origin_url": "https://footer-ui-enhance.preview.emergentagent.com"},
                         headers=free_user["headers"], timeout=90)
         assert r.status_code == 200, r.text
         d = r.json()

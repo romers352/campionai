@@ -20,8 +20,8 @@ from models import (
     RegisterInput, LoginInput, OnboardingInput, ProfileUpdate, ChatInput,
     SessionCreate, MemoryUpdate, ModelRouteConfig,
     ProviderSettings, PrivateModeInput, VoiceSettingsInput, TTSInput,
-    FoodInput, EventInput, PlanItemToggle, PaypalActivate, DonationOrder, GoogleSessionInput,
-    now_iso, new_id,
+    FoodInput, EventInput, PlanItemToggle, PaypalActivate, DonationOrder,
+    GoogleSessionInput, ContactInput, now_iso, new_id,
 )
 from auth import (
     hash_password, verify_password, create_token,
@@ -1145,6 +1145,22 @@ async def donation_capture(order_id: str, user=Depends(get_current_user)):
     if claimed:
         await _record_donation(claimed)
     return {"ok": True, "amount": record["amount"]}
+
+
+@api.post("/contact")
+async def submit_contact(inp: ContactInput):
+    doc = {
+        "id": new_id(),
+        "name": inp.name.strip()[:200],
+        "email": str(inp.email),
+        "subject": (inp.subject or "").strip()[:300],
+        "message": inp.message.strip()[:5000],
+        "created_at": now_iso(),
+        "handled": False,
+    }
+    await db.contact_messages.insert_one(doc)
+    logger.info(f"contact message received from {doc['email']}")
+    return {"ok": True, "message": "Thanks for reaching out — we'll get back to you soon."}
 
 
 @api.get("/donors/top")

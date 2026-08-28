@@ -233,3 +233,11 @@ class PayoutSettle(BaseModel):
 class ConsultSettings(BaseModel):
     commission_pct: float = Field(default=15, ge=0, le=100)
     free_volunteer_sessions_per_month: int = Field(default=2, ge=0, le=100)
+
+
+# ---------- Contact ----------
+class ContactInput(BaseModel):
+    name: str
+    email: EmailStr
+    subject: Optional[str] = None
+    message: str

@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
 import { api } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
+import { useVisibilityRefetch } from "@/hooks/use-visibility-refetch";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
@@ -278,6 +279,16 @@ export default function Wellness() {
   };
 
   useEffect(() => { loadStatus().then((s) => { if (s.active) loadPlusData(); }); }, []);
+
+  // Refresh Plus/subscription status (and plan data) when returning to the tab —
+  // e.g. right after completing a PayPal/Stripe checkout in another tab.
+  useVisibilityRefetch(async () => {
+    try {
+      await refresh();
+      const s = await loadStatus();
+      if (s.active) await loadPlusData();
+    } catch { /* best-effort */ }
+  });
 
   const startTrial = async () => {
     setBusy(true);

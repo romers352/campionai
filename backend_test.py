@@ -9,7 +9,7 @@ import json
 import uuid
 
 # Backend URL from frontend/.env
-BASE_URL = "https://fervent-carver-8.preview.emergentagent.com/api"
+BASE_URL = "https://footer-ui-enhance.preview.emergentagent.com/api"
 
 # Test credentials from review request
 ADMIN_EMAIL = "admin@campionai.com"
@@ -275,24 +275,160 @@ def test_register_duplicate_email(email):
     print("✅ Duplicate email correctly returns 400 with 'Email already registered'")
 
 
+# ============ Contact Form Tests (PUBLIC endpoint) ============
+
+def test_contact_valid_payload():
+    """Test POST /api/contact with valid payload - should return 200 with ok:true"""
+    print("\n=== Testing POST /api/contact (valid payload) ===")
+    response = requests.post(
+        f"{BASE_URL}/contact",
+        json={
+            "name": "Jane Test",
+            "email": "jane@example.com",
+            "subject": "Hi",
+            "message": "Hello there"
+        }
+    )
+    print(f"Status: {response.status_code}")
+    print(f"Response: {response.json()}")
+    
+    assert response.status_code == 200, \
+        f"Expected 200 for valid contact form, got {response.status_code}: {response.text}"
+    
+    data = response.json()
+    assert data.get("ok") is True, "Expected ok:true in response"
+    assert "message" in data, "Expected message field in response"
+    
+    print("✅ Valid contact form submission successful")
+
+
+def test_contact_no_auth():
+    """Test POST /api/contact WITHOUT Authorization header - should work (public endpoint)"""
+    print("\n=== Testing POST /api/contact (no auth header - public) ===")
+    response = requests.post(
+        f"{BASE_URL}/contact",
+        json={
+            "name": "Public User",
+            "email": "public@example.com",
+            "subject": "Testing public access",
+            "message": "This should work without authentication"
+        }
+    )
+    print(f"Status: {response.status_code}")
+    print(f"Response: {response.json()}")
+    
+    assert response.status_code == 200, \
+        f"Expected 200 for public contact form (no auth), got {response.status_code}: {response.text}"
+    
+    data = response.json()
+    assert data.get("ok") is True, "Expected ok:true in response"
+    
+    print("✅ Contact form works without authentication (public endpoint)")
+
+
+def test_contact_invalid_email():
+    """Test POST /api/contact with invalid email - should return 422"""
+    print("\n=== Testing POST /api/contact (invalid email) ===")
+    response = requests.post(
+        f"{BASE_URL}/contact",
+        json={
+            "name": "Jane",
+            "email": "not-an-email",
+            "message": "hey"
+        }
+    )
+    print(f"Status: {response.status_code}")
+    print(f"Response: {response.text}")
+    
+    assert response.status_code == 422, \
+        f"Expected 422 for invalid email, got {response.status_code}"
+    
+    print("✅ Invalid email correctly returns 422 (validation error)")
+
+
+def test_contact_missing_name():
+    """Test POST /api/contact with missing name - should return 422"""
+    print("\n=== Testing POST /api/contact (missing name) ===")
+    response = requests.post(
+        f"{BASE_URL}/contact",
+        json={
+            "email": "a@b.com",
+            "message": "hi"
+        }
+    )
+    print(f"Status: {response.status_code}")
+    print(f"Response: {response.text}")
+    
+    assert response.status_code == 422, \
+        f"Expected 422 for missing name, got {response.status_code}"
+    
+    print("✅ Missing name correctly returns 422 (validation error)")
+
+
+def test_contact_missing_message():
+    """Test POST /api/contact with missing message - should return 422"""
+    print("\n=== Testing POST /api/contact (missing message) ===")
+    response = requests.post(
+        f"{BASE_URL}/contact",
+        json={
+            "name": "x",
+            "email": "a@b.com"
+        }
+    )
+    print(f"Status: {response.status_code}")
+    print(f"Response: {response.text}")
+    
+    assert response.status_code == 422, \
+        f"Expected 422 for missing message, got {response.status_code}"
+    
+    print("✅ Missing message correctly returns 422 (validation error)")
+
+
+def test_contact_repeated_submissions():
+    """Test POST /api/contact with repeated submissions - should not crash"""
+    print("\n=== Testing POST /api/contact (repeated submissions) ===")
+    
+    for i in range(3):
+        response = requests.post(
+            f"{BASE_URL}/contact",
+            json={
+                "name": f"Repeat User {i}",
+                "email": f"repeat{i}@example.com",
+                "subject": f"Submission {i}",
+                "message": f"This is submission number {i}"
+            }
+        )
+        print(f"Submission {i+1}: Status {response.status_code}")
+        
+        assert response.status_code == 200, \
+            f"Expected 200 for submission {i+1}, got {response.status_code}: {response.text}"
+        
+        data = response.json()
+        assert data.get("ok") is True, f"Expected ok:true in submission {i+1}"
+    
+    print("✅ Repeated submissions work correctly (no crash)")
+
+
 def main():
     print("=" * 70)
     print("CampionAI Backend Tests")
-    print("Testing: PayPal LIVE Integration + Emergent Google OAuth")
+    print("Testing: Contact Form + PayPal LIVE + Emergent Google OAuth")
     print("Testing error paths, auth-gating, and endpoint wiring")
     print("NO REAL SUBSCRIPTIONS WILL BE CREATED")
     print("=" * 70)
     
     try:
-        # ============ PART 1: Google Sign-in Tests (NEW) ============
+        # ============ PART 1: Contact Form Tests (NEW) ============
         print("\n" + "=" * 70)
-        print("PART 1: GOOGLE SIGN-IN (EMERGENT OAUTH) TESTS")
+        print("PART 1: CONTACT FORM (PUBLIC ENDPOINT) TESTS")
         print("=" * 70)
         
-        test_google_session_bogus()
-        test_google_session_missing_body()
-        test_google_session_empty_session_id()
-        test_google_session_null_body()
+        test_contact_valid_payload()
+        test_contact_no_auth()
+        test_contact_invalid_email()
+        test_contact_missing_name()
+        test_contact_missing_message()
+        test_contact_repeated_submissions()
         
         # ============ PART 2: No-regression Email/Password Auth ============
         print("\n" + "=" * 70)
@@ -306,9 +442,19 @@ def main():
         new_email = test_register_new_user()
         test_register_duplicate_email(new_email)
         
-        # ============ PART 3: PayPal Integration Tests (EXISTING) ============
+        # ============ PART 3: Google Sign-in Tests ============
         print("\n" + "=" * 70)
-        print("PART 3: PAYPAL LIVE INTEGRATION TESTS")
+        print("PART 3: GOOGLE SIGN-IN (EMERGENT OAUTH) TESTS")
+        print("=" * 70)
+        
+        test_google_session_bogus()
+        test_google_session_missing_body()
+        test_google_session_empty_session_id()
+        test_google_session_null_body()
+        
+        # ============ PART 4: PayPal Integration Tests ============
+        print("\n" + "=" * 70)
+        print("PART 4: PAYPAL LIVE INTEGRATION TESTS")
         print("=" * 70)
         
         test_plus_status(token)
@@ -321,10 +467,15 @@ def main():
         print("✅ ALL TESTS PASSED")
         print("=" * 70)
         print("\nSUMMARY:")
-        print("  ✅ Google sign-in endpoint correctly rejects bogus/invalid session_ids (401)")
-        print("  ✅ Google sign-in endpoint handles missing/empty body without crashing")
+        print("  ✅ Contact form (public) accepts valid submissions and returns 200 with ok:true")
+        print("  ✅ Contact form works without authentication (public endpoint)")
+        print("  ✅ Contact form validates email (422 for invalid email)")
+        print("  ✅ Contact form validates required fields (422 for missing name/message)")
+        print("  ✅ Contact form handles repeated submissions without crashing")
         print("  ✅ Email/password auth (login, register, /me) working correctly")
         print("  ✅ Duplicate email registration correctly returns 400")
+        print("  ✅ Google sign-in endpoint correctly rejects bogus/invalid session_ids (401)")
+        print("  ✅ Google sign-in endpoint handles missing/empty body without crashing")
         print("  ✅ PayPal webhook signature verification working")
         print("  ✅ PayPal activate endpoint auth-gated and server-side verification working")
         print("=" * 70)
