@@ -4,6 +4,7 @@ import re
 import json
 import base64
 import logging
+import secrets
 from pathlib import Path
 from datetime import datetime, timezone, timedelta
 
@@ -23,7 +24,7 @@ from models import (
     ProviderSettings, PrivateModeInput, VoiceSettingsInput, TTSInput,
     FoodInput, FoodEdit, EventInput, PlanItemToggle, PlanItemAdd, PlanReorder,
     ChatFeedback, PaypalActivate, DonationOrder,
-    GoogleSessionInput, ContactInput, now_iso, new_id,
+    GoogleSessionInput, ForgotPasswordInput, ResetPasswordInput, ContactInput, now_iso, new_id,
 )
 from auth import (
     hash_password, verify_password, create_token,
@@ -33,7 +34,7 @@ from hotlines import get_hotlines, country_list, COUNTRY_NAMES
 from llm_router import ModelRouter, DEFAULT_ROUTES, list_openrouter_models
 from safety import classify_message
 from memory_engine import extract_memories, build_memory_context
-from notifications import alert_contact, summarize
+from notifications import alert_contact, summarize, send_email
 from voice import synthesize
 from storage import put_object, get_object, init_storage, APP_NAME, MIME_TYPES
 from doctors import make_router as doctors_router, is_online as doctor_is_online, public_doctor
@@ -171,6 +172,78 @@ async def logout(user=Depends(get_current_user)):
     including any that leaked into a URL or a proxy log."""
     await db.users.update_one({"id": user["id"]}, {"$inc": {"token_version": 1}})
     return {"ok": True}
+
+
+def _reset_email_html(link: str) -> str:
+    return f"""
+    <div style="font-family:system-ui,sans-serif;max-width:480px;margin:0 auto;color:#1a1a1c">
+      <h2 style="font-weight:500">Reset your CampionAI password</h2>
+      <p style="color:#555;line-height:1.6">We got a request to reset your password. Tap the button below to choose a new one. This link expires in 30 minutes.</p>
+      <p style="margin:28px 0">
+        <a href="{link}" style="background:#1a1a1c;color:#fff;text-decoration:none;padding:12px 22px;border-radius:999px;font-weight:500">Reset password</a>
+      </p>
+      <p style="color:#888;font-size:13px;line-height:1.6">If you didn't ask for this, you can safely ignore this email — your password won't change.</p>
+      <p style="color:#aaa;font-size:12px;word-break:break-all">{link}</p>
+    </div>
+    """
+
+
+@api.post("/auth/forgot-password")
+async def forgot_password(inp: ForgotPasswordInput, request: Request):
+    """Always returns a generic success so we never reveal whether an email is registered.
+    If Resend isn't configured yet, the reset link is returned as a dev fallback so the
+    flow stays testable — this auto-disables the moment RESEND_API_KEY is set."""
+    resp = {"ok": True, "message": "If that email is registered, a reset link is on its way."}
+    user = await db.users.find_one({"email": inp.email.lower()})
+    if not user:
+        return resp
+
+    token = secrets.token_urlsafe(32)
+    expires = (datetime.now(timezone.utc) + timedelta(minutes=30)).isoformat()
+    await db.password_resets.insert_one({
+        "id": new_id(), "user_id": user["id"], "token": token,
+        "expires_at": expires, "used": False, "created_at": now_iso(),
+    })
+
+    origin = (request.headers.get("origin") or "").rstrip("/")
+    if not origin:
+        ref = request.headers.get("referer") or ""
+        origin = ref.split("/reset-password")[0].rstrip("/") if ref else ""
+    reset_link = f"{origin}/reset-password?token={token}" if origin else f"/reset-password?token={token}"
+
+    if os.environ.get("RESEND_API_KEY", "").strip():
+        try:
+            await send_email(user["email"], "Reset your CampionAI password", _reset_email_html(reset_link))
+        except Exception as e:
+            logger.error(f"reset email failed: {e}")
+    else:
+        logger.warning(f"[dev] password reset link for {user['email']}: {reset_link}")
+        resp["dev_reset_link"] = reset_link
+        resp["email_configured"] = False
+    return resp
+
+
+@api.post("/auth/reset-password")
+async def reset_password(inp: ResetPasswordInput):
+    rec = await db.password_resets.find_one({"token": inp.token})
+    if not rec or rec.get("used"):
+        raise HTTPException(status_code=400, detail="This reset link is invalid or has already been used.")
+    try:
+        expired = datetime.fromisoformat(rec["expires_at"]) < datetime.now(timezone.utc)
+    except Exception:
+        expired = True
+    if expired:
+        raise HTTPException(status_code=400, detail="This reset link has expired — please request a new one.")
+    user = await db.users.find_one({"id": rec["user_id"]})
+    if not user:
+        raise HTTPException(status_code=400, detail="Account not found.")
+    await db.users.update_one(
+        {"id": user["id"]},
+        {"$set": {"password_hash": hash_password(inp.new_password), "auth_provider": "both" if not user.get("password_hash") else user.get("auth_provider", "email")},
+         "$inc": {"token_version": 1}},
+    )
+    await db.password_resets.update_one({"id": rec["id"]}, {"$set": {"used": True, "used_at": now_iso()}})
+    return {"ok": True, "message": "Your password has been reset. You can sign in now."}
 
 
 EMERGENT_SESSION_URL = "https://demobackend.emergentagent.com/auth/v1/env/oauth/session-data"

@@ -1,690 +1,529 @@
 #!/usr/bin/env python3
 """
-Backend API test suite for CampionAI - NEW ENDPOINTS
-Tests wellness plan, food, chat feedback, and doctors search endpoints.
+Backend API Testing for CampionAI
+Tests password reset endpoints with comprehensive scenarios
 """
+
 import requests
 import json
 import sys
-from datetime import datetime
+import time
 
 # Backend URL from frontend/.env
-BASE_URL = "https://3fffec5e-d0d4-43ec-8fae-4f0ad47c6840.preview.emergentagent.com/api"
+BASE_URL = "https://fix-it-features.preview.emergentagent.com/api"
 
 # Test credentials from /app/memory/test_credentials.md
 ADMIN_EMAIL = "admin@campionai.com"
 ADMIN_PASSWORD = "Admin@12345"
 
-# Color codes for output
-GREEN = "\033[92m"
-RED = "\033[91m"
-YELLOW = "\033[93m"
-BLUE = "\033[94m"
-RESET = "\033[0m"
+# Colors for output
+GREEN = '\033[92m'
+RED = '\033[91m'
+YELLOW = '\033[93m'
+BLUE = '\033[94m'
+RESET = '\033[0m'
 
-def log_test(name, status, details=""):
-    """Log test result with color coding"""
-    color = GREEN if status == "PASS" else RED if status == "FAIL" else YELLOW
-    print(f"{color}[{status}]{RESET} {name}")
-    if details:
-        print(f"      {details}")
+def log_test(name):
+    print(f"\n{BLUE}[TEST]{RESET} {name}")
 
-def test_login():
-    """Test admin login and return token"""
-    print(f"\n{BLUE}=== Testing Login (No-Regression) ==={RESET}")
+def log_pass(msg):
+    print(f"  {GREEN}✓{RESET} {msg}")
+
+def log_fail(msg):
+    print(f"  {RED}✗{RESET} {msg}")
+
+def log_info(msg):
+    print(f"  {YELLOW}ℹ{RESET} {msg}")
+
+def test_forgot_password_registered_email():
+    """Test forgot-password with a registered email (admin@campionai.com)"""
+    log_test("POST /api/auth/forgot-password - Registered email")
+    
+    url = f"{BASE_URL}/auth/forgot-password"
+    headers = {
+        "Content-Type": "application/json",
+        "Origin": "https://example.com"
+    }
+    payload = {"email": ADMIN_EMAIL}
     
     try:
-        response = requests.post(
-            f"{BASE_URL}/auth/login",
-            json={"email": ADMIN_EMAIL, "password": ADMIN_PASSWORD},
-            timeout=10
-        )
+        resp = requests.post(url, json=payload, headers=headers, timeout=10)
         
-        if response.status_code == 200:
-            data = response.json()
-            if "token" in data:
-                log_test("POST /api/auth/login", "PASS", f"Status: {response.status_code}, Token received")
-                return data["token"]
-            else:
-                log_test("POST /api/auth/login", "FAIL", f"Status: {response.status_code}, No token in response")
-                return None
-        else:
-            log_test("POST /api/auth/login", "FAIL", f"Status: {response.status_code}, Response: {response.text[:200]}")
-            return None
-    except Exception as e:
-        log_test("POST /api/auth/login", "FAIL", f"Exception: {str(e)}")
-        return None
-
-def test_start_trial(token):
-    """Start Plus trial to enable wellness endpoints"""
-    print(f"\n{BLUE}=== Starting Plus Trial ==={RESET}")
-    
-    try:
-        response = requests.post(
-            f"{BASE_URL}/plus/start-trial",
-            headers={"Authorization": f"Bearer {token}"},
-            timeout=10
-        )
-        
-        if response.status_code == 200:
-            data = response.json()
-            if data.get("active"):
-                log_test("POST /api/plus/start-trial", "PASS", f"Status: {response.status_code}, Plus active: {data.get('active')}")
-                return True
-            else:
-                log_test("POST /api/plus/start-trial", "FAIL", f"Status: {response.status_code}, Plus not active")
-                return False
-        elif response.status_code == 400 and "Trial already used" in response.text:
-            log_test("POST /api/plus/start-trial", "PASS", f"Status: {response.status_code}, Trial already active (expected)")
-            return True
-        else:
-            log_test("POST /api/plus/start-trial", "FAIL", f"Status: {response.status_code}, Response: {response.text[:200]}")
+        # Check status code
+        if resp.status_code != 200:
+            log_fail(f"Expected 200, got {resp.status_code}")
+            log_info(f"Response: {resp.text}")
             return False
-    except Exception as e:
-        log_test("POST /api/plus/start-trial", "FAIL", f"Exception: {str(e)}")
-        return False
-
-def test_wellness_plan(token):
-    """Test wellness plan endpoints"""
-    print(f"\n{BLUE}=== Testing Wellness Plan Endpoints ==={RESET}")
-    
-    # 1. GET /api/wellness/plan
-    try:
-        response = requests.get(
-            f"{BASE_URL}/wellness/plan",
-            headers={"Authorization": f"Bearer {token}"},
-            timeout=10
-        )
         
-        if response.status_code == 200:
-            data = response.json()
-            if "items" in data and isinstance(data["items"], list):
-                log_test("GET /api/wellness/plan", "PASS", f"Status: {response.status_code}, Items count: {len(data['items'])}")
-                initial_items_count = len(data["items"])
-            else:
-                log_test("GET /api/wellness/plan", "FAIL", f"Status: {response.status_code}, No items array in response")
-                return False
-        else:
-            log_test("GET /api/wellness/plan", "FAIL", f"Status: {response.status_code}, Response: {response.text[:200]}")
+        log_pass(f"Status code: {resp.status_code}")
+        
+        # Check response structure
+        data = resp.json()
+        
+        # Must have ok:true
+        if not data.get("ok"):
+            log_fail("Response missing 'ok: true'")
             return False
-    except Exception as e:
-        log_test("GET /api/wellness/plan", "FAIL", f"Exception: {str(e)}")
-        return False
-    
-    # 2. POST /api/wellness/plan/item - Add custom item
-    try:
-        new_item = {
-            "title": "Drink water",
-            "detail": "Stay hydrated throughout the day",
-            "type": "task",
-            "duration_min": 5,
-            "time_of_day": "morning"
-        }
-        response = requests.post(
-            f"{BASE_URL}/wellness/plan/item",
-            headers={"Authorization": f"Bearer {token}"},
-            json=new_item,
-            timeout=10
-        )
+        log_pass("Response has 'ok: true'")
         
-        if response.status_code == 200:
-            data = response.json()
-            if data.get("ok") and "items" in data:
-                new_count = len(data["items"])
-                if new_count == initial_items_count + 1:
-                    # Check if the new item has custom flag
-                    last_item = data["items"][-1]
-                    if last_item.get("custom") and last_item.get("title") == "Drink water":
-                        log_test("POST /api/wellness/plan/item", "PASS", f"Status: {response.status_code}, Item added with custom:true")
-                    else:
-                        log_test("POST /api/wellness/plan/item", "FAIL", f"Status: {response.status_code}, Item added but missing custom flag or wrong title")
-                else:
-                    log_test("POST /api/wellness/plan/item", "FAIL", f"Status: {response.status_code}, Items count mismatch")
-            else:
-                log_test("POST /api/wellness/plan/item", "FAIL", f"Status: {response.status_code}, Missing ok or items in response")
-        else:
-            log_test("POST /api/wellness/plan/item", "FAIL", f"Status: {response.status_code}, Response: {response.text[:200]}")
+        # Must have generic message
+        if not data.get("message"):
+            log_fail("Response missing 'message'")
             return False
-    except Exception as e:
-        log_test("POST /api/wellness/plan/item", "FAIL", f"Exception: {str(e)}")
-        return False
-    
-    # 3. DELETE /api/wellness/plan/item/{index} - Delete last item
-    try:
-        # Get current plan to know the count
-        response = requests.get(
-            f"{BASE_URL}/wellness/plan",
-            headers={"Authorization": f"Bearer {token}"},
-            timeout=10
-        )
-        current_count = len(response.json()["items"])
-        last_index = current_count - 1
+        log_pass(f"Message: {data['message']}")
         
-        response = requests.delete(
-            f"{BASE_URL}/wellness/plan/item/{last_index}",
-            headers={"Authorization": f"Bearer {token}"},
-            timeout=10
-        )
-        
-        if response.status_code == 200:
-            data = response.json()
-            if data.get("ok") and len(data["items"]) == current_count - 1:
-                log_test("DELETE /api/wellness/plan/item/{index}", "PASS", f"Status: {response.status_code}, Item removed")
-            else:
-                log_test("DELETE /api/wellness/plan/item/{index}", "FAIL", f"Status: {response.status_code}, Item not removed properly")
-        else:
-            log_test("DELETE /api/wellness/plan/item/{index}", "FAIL", f"Status: {response.status_code}, Response: {response.text[:200]}")
-    except Exception as e:
-        log_test("DELETE /api/wellness/plan/item/{index}", "FAIL", f"Exception: {str(e)}")
-    
-    # 4. DELETE with out-of-range index - should return 404
-    try:
-        response = requests.delete(
-            f"{BASE_URL}/wellness/plan/item/999",
-            headers={"Authorization": f"Bearer {token}"},
-            timeout=10
-        )
-        
-        if response.status_code == 404:
-            log_test("DELETE /api/wellness/plan/item/{out-of-range}", "PASS", f"Status: {response.status_code}, Correctly returns 404")
-        else:
-            log_test("DELETE /api/wellness/plan/item/{out-of-range}", "FAIL", f"Status: {response.status_code}, Expected 404")
-    except Exception as e:
-        log_test("DELETE /api/wellness/plan/item/{out-of-range}", "FAIL", f"Exception: {str(e)}")
-    
-    # 5. PUT /api/wellness/plan/reorder - Valid reorder
-    try:
-        # Get current plan
-        response = requests.get(
-            f"{BASE_URL}/wellness/plan",
-            headers={"Authorization": f"Bearer {token}"},
-            timeout=10
-        )
-        items_count = len(response.json()["items"])
-        
-        # Create a valid permutation (reverse order)
-        valid_order = list(range(items_count))[::-1]
-        
-        response = requests.put(
-            f"{BASE_URL}/wellness/plan/reorder",
-            headers={"Authorization": f"Bearer {token}"},
-            json={"order": valid_order},
-            timeout=10
-        )
-        
-        if response.status_code == 200:
-            data = response.json()
-            if data.get("ok") and "items" in data:
-                log_test("PUT /api/wellness/plan/reorder (valid)", "PASS", f"Status: {response.status_code}, Items reordered")
-            else:
-                log_test("PUT /api/wellness/plan/reorder (valid)", "FAIL", f"Status: {response.status_code}, Missing ok or items")
-        else:
-            log_test("PUT /api/wellness/plan/reorder (valid)", "FAIL", f"Status: {response.status_code}, Response: {response.text[:200]}")
-    except Exception as e:
-        log_test("PUT /api/wellness/plan/reorder (valid)", "FAIL", f"Exception: {str(e)}")
-    
-    # 6. PUT /api/wellness/plan/reorder - Invalid order (duplicate indices)
-    try:
-        response = requests.get(
-            f"{BASE_URL}/wellness/plan",
-            headers={"Authorization": f"Bearer {token}"},
-            timeout=10
-        )
-        items_count = len(response.json()["items"])
-        
-        # Invalid order with duplicates
-        invalid_order = [0, 0, 1] if items_count >= 3 else [0, 0]
-        
-        response = requests.put(
-            f"{BASE_URL}/wellness/plan/reorder",
-            headers={"Authorization": f"Bearer {token}"},
-            json={"order": invalid_order},
-            timeout=10
-        )
-        
-        if response.status_code == 400:
-            log_test("PUT /api/wellness/plan/reorder (invalid)", "PASS", f"Status: {response.status_code}, Correctly returns 400 for invalid order")
-        else:
-            log_test("PUT /api/wellness/plan/reorder (invalid)", "FAIL", f"Status: {response.status_code}, Expected 400 for invalid order")
-    except Exception as e:
-        log_test("PUT /api/wellness/plan/reorder (invalid)", "FAIL", f"Exception: {str(e)}")
-    
-    return True
-
-def test_wellness_streak(token):
-    """Test wellness streak endpoint"""
-    print(f"\n{BLUE}=== Testing Wellness Streak ==={RESET}")
-    
-    # 1. GET /api/wellness/streak - Initial state
-    try:
-        response = requests.get(
-            f"{BASE_URL}/wellness/streak",
-            headers={"Authorization": f"Bearer {token}"},
-            timeout=10
-        )
-        
-        if response.status_code == 200:
-            data = response.json()
-            if "current" in data and "best" in data and "today_complete" in data:
-                log_test("GET /api/wellness/streak", "PASS", 
-                        f"Status: {response.status_code}, Current: {data['current']}, Best: {data['best']}, Today complete: {data['today_complete']}")
-                initial_today_complete = data["today_complete"]
-            else:
-                log_test("GET /api/wellness/streak", "FAIL", f"Status: {response.status_code}, Missing required fields")
-                return False
-        else:
-            log_test("GET /api/wellness/streak", "FAIL", f"Status: {response.status_code}, Response: {response.text[:200]}")
+        # Since RESEND_API_KEY is empty, must have dev_reset_link
+        if "dev_reset_link" not in data:
+            log_fail("Response missing 'dev_reset_link' (RESEND_API_KEY is empty)")
             return False
-    except Exception as e:
-        log_test("GET /api/wellness/streak", "FAIL", f"Exception: {str(e)}")
-        return False
-    
-    # 2. Toggle all items to done and check streak
-    try:
-        # Get current plan
-        response = requests.get(
-            f"{BASE_URL}/wellness/plan",
-            headers={"Authorization": f"Bearer {token}"},
-            timeout=10
-        )
-        plan = response.json()
-        items = plan.get("items", [])
+        log_pass(f"dev_reset_link present: {data['dev_reset_link']}")
         
-        # Toggle all items to done
-        for i, item in enumerate(items):
-            if not item.get("done"):
-                response = requests.put(
-                    f"{BASE_URL}/wellness/plan/toggle",
-                    headers={"Authorization": f"Bearer {token}"},
-                    json={"item_index": i},
-                    timeout=10
-                )
-                if response.status_code != 200:
-                    log_test("Toggle items to done", "FAIL", f"Failed to toggle item {i}")
-                    return False
-        
-        # Check streak again
-        response = requests.get(
-            f"{BASE_URL}/wellness/streak",
-            headers={"Authorization": f"Bearer {token}"},
-            timeout=10
-        )
-        
-        if response.status_code == 200:
-            data = response.json()
-            if data.get("today_complete") == True and data.get("current") >= 1:
-                log_test("Streak after completing all items", "PASS", 
-                        f"Status: {response.status_code}, Today complete: True, Current streak: {data['current']}")
-            else:
-                log_test("Streak after completing all items", "FAIL", 
-                        f"Status: {response.status_code}, Today complete: {data.get('today_complete')}, Current: {data.get('current')}")
-        else:
-            log_test("Streak after completing all items", "FAIL", f"Status: {response.status_code}")
-    except Exception as e:
-        log_test("Streak after completing all items", "FAIL", f"Exception: {str(e)}")
-    
-    return True
-
-def test_wellness_food(token):
-    """Test wellness food endpoints"""
-    print(f"\n{BLUE}=== Testing Wellness Food Endpoints ==={RESET}")
-    
-    food_id = None
-    
-    # 1. POST /api/wellness/food - Log food with meal
-    try:
-        food_data = {
-            "text": "2 eggs and toast",
-            "meal": "breakfast"
-        }
-        response = requests.post(
-            f"{BASE_URL}/wellness/food",
-            headers={"Authorization": f"Bearer {token}"},
-            json=food_data,
-            timeout=10
-        )
-        
-        if response.status_code == 200:
-            data = response.json()
-            if (data.get("meal") == "breakfast" and 
-                "calories" in data and isinstance(data["calories"], int) and
-                "protein_g" in data and isinstance(data["protein_g"], int) and
-                "carbs_g" in data and isinstance(data["carbs_g"], int) and
-                "fat_g" in data and isinstance(data["fat_g"], int)):
-                log_test("POST /api/wellness/food", "PASS", 
-                        f"Status: {response.status_code}, Meal: {data['meal']}, Calories: {data['calories']}, Protein: {data['protein_g']}g")
-                food_id = data.get("id")
-            else:
-                log_test("POST /api/wellness/food", "FAIL", f"Status: {response.status_code}, Missing or invalid nutrition data")
-                return False
-        else:
-            log_test("POST /api/wellness/food", "FAIL", f"Status: {response.status_code}, Response: {response.text[:200]}")
+        # Must have email_configured: false
+        if data.get("email_configured") != False:
+            log_fail(f"Expected email_configured: false, got {data.get('email_configured')}")
             return False
-    except Exception as e:
-        log_test("POST /api/wellness/food", "FAIL", f"Exception: {str(e)}")
-        return False
-    
-    # 2. GET /api/wellness/food - Get food logs
-    try:
-        response = requests.get(
-            f"{BASE_URL}/wellness/food",
-            headers={"Authorization": f"Bearer {token}"},
-            timeout=10
-        )
+        log_pass("email_configured: false")
         
-        if response.status_code == 200:
-            data = response.json()
-            if "totals" in data and "logs" in data:
-                # Check if our new log is present
-                logs = data.get("logs", [])
-                found = any(log.get("id") == food_id for log in logs)
-                if found:
-                    log_test("GET /api/wellness/food", "PASS", 
-                            f"Status: {response.status_code}, Logs count: {len(logs)}, New log present with meal field")
-                else:
-                    log_test("GET /api/wellness/food", "FAIL", f"Status: {response.status_code}, New log not found")
-            else:
-                log_test("GET /api/wellness/food", "FAIL", f"Status: {response.status_code}, Missing totals or logs")
+        # Extract token from dev_reset_link for later use
+        reset_link = data["dev_reset_link"]
+        if "token=" in reset_link:
+            token = reset_link.split("token=")[1]
+            log_info(f"Extracted token: {token[:20]}...")
+            return token
         else:
-            log_test("GET /api/wellness/food", "FAIL", f"Status: {response.status_code}, Response: {response.text[:200]}")
-    except Exception as e:
-        log_test("GET /api/wellness/food", "FAIL", f"Exception: {str(e)}")
-    
-    # 3. PUT /api/wellness/food/{fid} - Edit food log
-    if food_id:
-        try:
-            edit_data = {
-                "summary": "Eggs and whole wheat toast",
-                "calories": 250
-            }
-            response = requests.put(
-                f"{BASE_URL}/wellness/food/{food_id}",
-                headers={"Authorization": f"Bearer {token}"},
-                json=edit_data,
-                timeout=10
-            )
+            log_fail("Could not extract token from dev_reset_link")
+            return False
             
-            if response.status_code == 200:
-                data = response.json()
-                if data.get("summary") == "Eggs and whole wheat toast" and data.get("calories") == 250:
-                    log_test("PUT /api/wellness/food/{fid}", "PASS", 
-                            f"Status: {response.status_code}, Updated summary and calories")
-                else:
-                    log_test("PUT /api/wellness/food/{fid}", "FAIL", f"Status: {response.status_code}, Changes not reflected")
-            else:
-                log_test("PUT /api/wellness/food/{fid}", "FAIL", f"Status: {response.status_code}, Response: {response.text[:200]}")
-        except Exception as e:
-            log_test("PUT /api/wellness/food/{fid}", "FAIL", f"Exception: {str(e)}")
-    
-    # 4. PUT with unknown fid - should return 404
-    try:
-        response = requests.put(
-            f"{BASE_URL}/wellness/food/unknown-food-id-12345",
-            headers={"Authorization": f"Bearer {token}"},
-            json={"summary": "Test", "calories": 100},
-            timeout=10
-        )
-        
-        if response.status_code == 404:
-            log_test("PUT /api/wellness/food/{unknown-fid}", "PASS", f"Status: {response.status_code}, Correctly returns 404")
-        else:
-            log_test("PUT /api/wellness/food/{unknown-fid}", "FAIL", f"Status: {response.status_code}, Expected 404")
     except Exception as e:
-        log_test("PUT /api/wellness/food/{unknown-fid}", "FAIL", f"Exception: {str(e)}")
-    
-    # 5. PUT with empty body - should return 400
-    if food_id:
-        try:
-            response = requests.put(
-                f"{BASE_URL}/wellness/food/{food_id}",
-                headers={"Authorization": f"Bearer {token}"},
-                json={},
-                timeout=10
-            )
-            
-            if response.status_code == 400:
-                log_test("PUT /api/wellness/food/{fid} (empty body)", "PASS", f"Status: {response.status_code}, Correctly returns 400")
-            else:
-                log_test("PUT /api/wellness/food/{fid} (empty body)", "FAIL", f"Status: {response.status_code}, Expected 400")
-        except Exception as e:
-            log_test("PUT /api/wellness/food/{fid} (empty body)", "FAIL", f"Exception: {str(e)}")
-    
-    return True
-
-def test_chat_feedback(token):
-    """Test chat feedback endpoint"""
-    print(f"\n{BLUE}=== Testing Chat Feedback Endpoint ==={RESET}")
-    
-    # 1. POST /api/chat/feedback - Valid rating "up"
-    try:
-        feedback_data = {
-            "session_id": None,
-            "content": "This was helpful",
-            "rating": "up"
-        }
-        response = requests.post(
-            f"{BASE_URL}/chat/feedback",
-            headers={"Authorization": f"Bearer {token}"},
-            json=feedback_data,
-            timeout=10
-        )
-        
-        if response.status_code == 200:
-            data = response.json()
-            if data.get("ok"):
-                log_test("POST /api/chat/feedback (rating: up)", "PASS", f"Status: {response.status_code}, ok: true")
-            else:
-                log_test("POST /api/chat/feedback (rating: up)", "FAIL", f"Status: {response.status_code}, ok not true")
-        else:
-            log_test("POST /api/chat/feedback (rating: up)", "FAIL", f"Status: {response.status_code}, Response: {response.text[:200]}")
-    except Exception as e:
-        log_test("POST /api/chat/feedback (rating: up)", "FAIL", f"Exception: {str(e)}")
-    
-    # 2. POST /api/chat/feedback - Valid rating "down"
-    try:
-        feedback_data = {
-            "session_id": None,
-            "content": "Not helpful",
-            "rating": "down"
-        }
-        response = requests.post(
-            f"{BASE_URL}/chat/feedback",
-            headers={"Authorization": f"Bearer {token}"},
-            json=feedback_data,
-            timeout=10
-        )
-        
-        if response.status_code == 200:
-            data = response.json()
-            if data.get("ok"):
-                log_test("POST /api/chat/feedback (rating: down)", "PASS", f"Status: {response.status_code}, ok: true")
-            else:
-                log_test("POST /api/chat/feedback (rating: down)", "FAIL", f"Status: {response.status_code}, ok not true")
-        else:
-            log_test("POST /api/chat/feedback (rating: down)", "FAIL", f"Status: {response.status_code}, Response: {response.text[:200]}")
-    except Exception as e:
-        log_test("POST /api/chat/feedback (rating: down)", "FAIL", f"Exception: {str(e)}")
-    
-    # 3. POST /api/chat/feedback - Invalid rating
-    try:
-        feedback_data = {
-            "session_id": None,
-            "content": "Test",
-            "rating": "sideways"
-        }
-        response = requests.post(
-            f"{BASE_URL}/chat/feedback",
-            headers={"Authorization": f"Bearer {token}"},
-            json=feedback_data,
-            timeout=10
-        )
-        
-        if response.status_code == 422:
-            log_test("POST /api/chat/feedback (invalid rating)", "PASS", f"Status: {response.status_code}, Correctly returns 422")
-        else:
-            log_test("POST /api/chat/feedback (invalid rating)", "FAIL", f"Status: {response.status_code}, Expected 422")
-    except Exception as e:
-        log_test("POST /api/chat/feedback (invalid rating)", "FAIL", f"Exception: {str(e)}")
-    
-    # 4. POST /api/chat/feedback - Missing auth header
-    try:
-        feedback_data = {
-            "session_id": None,
-            "content": "Test",
-            "rating": "up"
-        }
-        response = requests.post(
-            f"{BASE_URL}/chat/feedback",
-            json=feedback_data,
-            timeout=10
-        )
-        
-        if response.status_code in [401, 403]:
-            log_test("POST /api/chat/feedback (no auth)", "PASS", f"Status: {response.status_code}, Correctly requires auth")
-        else:
-            log_test("POST /api/chat/feedback (no auth)", "FAIL", f"Status: {response.status_code}, Expected 401/403")
-    except Exception as e:
-        log_test("POST /api/chat/feedback (no auth)", "FAIL", f"Exception: {str(e)}")
-    
-    return True
-
-def test_doctors_search(token):
-    """Test doctors search endpoint"""
-    print(f"\n{BLUE}=== Testing Doctors Search Endpoint ==={RESET}")
-    
-    # 1. GET /api/doctors - List all doctors
-    try:
-        response = requests.get(
-            f"{BASE_URL}/doctors",
-            headers={"Authorization": f"Bearer {token}"},
-            timeout=10
-        )
-        
-        if response.status_code == 200:
-            data = response.json()
-            if isinstance(data, list):
-                log_test("GET /api/doctors", "PASS", f"Status: {response.status_code}, Doctors count: {len(data)}")
-                
-                # Verify demo doctors are seeded (at least 5)
-                if len(data) >= 5:
-                    log_test("Demo doctors seeded", "PASS", f"Found {len(data)} doctors (expected >= 5)")
-                else:
-                    log_test("Demo doctors seeded", "FAIL", f"Found {len(data)} doctors (expected >= 5)")
-            else:
-                log_test("GET /api/doctors", "FAIL", f"Status: {response.status_code}, Response is not a list")
-                return False
-        else:
-            log_test("GET /api/doctors", "FAIL", f"Status: {response.status_code}, Response: {response.text[:200]}")
-            return False
-    except Exception as e:
-        log_test("GET /api/doctors", "FAIL", f"Exception: {str(e)}")
+        log_fail(f"Exception: {e}")
         return False
+
+def test_forgot_password_unknown_email():
+    """Test forgot-password with an unknown email - must NOT leak email existence"""
+    log_test("POST /api/auth/forgot-password - Unknown email (security check)")
     
-    # 2. GET /api/doctors?q=aisha - Search by name
+    url = f"{BASE_URL}/auth/forgot-password"
+    headers = {
+        "Content-Type": "application/json",
+        "Origin": "https://example.com"
+    }
+    payload = {"email": "nobody-xyz-unknown@example.com"}
+    
     try:
-        response = requests.get(
-            f"{BASE_URL}/doctors?q=aisha",
-            headers={"Authorization": f"Bearer {token}"},
-            timeout=10
-        )
+        resp = requests.post(url, json=payload, headers=headers, timeout=10)
         
-        if response.status_code == 200:
-            data = response.json()
-            if isinstance(data, list):
-                # Check if results contain "aisha" in name
-                matching = [d for d in data if "aisha" in (d.get("name") or "").lower()]
-                if len(matching) > 0:
-                    log_test("GET /api/doctors?q=aisha", "PASS", f"Status: {response.status_code}, Found {len(matching)} matching doctor(s)")
-                else:
-                    log_test("GET /api/doctors?q=aisha", "FAIL", f"Status: {response.status_code}, No matching doctors found")
-            else:
-                log_test("GET /api/doctors?q=aisha", "FAIL", f"Status: {response.status_code}, Response is not a list")
-        else:
-            log_test("GET /api/doctors?q=aisha", "FAIL", f"Status: {response.status_code}, Response: {response.text[:200]}")
+        # Check status code
+        if resp.status_code != 200:
+            log_fail(f"Expected 200, got {resp.status_code}")
+            log_info(f"Response: {resp.text}")
+            return False
+        
+        log_pass(f"Status code: {resp.status_code}")
+        
+        # Check response structure
+        data = resp.json()
+        
+        # Must have ok:true
+        if not data.get("ok"):
+            log_fail("Response missing 'ok: true'")
+            return False
+        log_pass("Response has 'ok: true'")
+        
+        # Must have generic message (same as registered email)
+        if not data.get("message"):
+            log_fail("Response missing 'message'")
+            return False
+        log_pass(f"Message: {data['message']}")
+        
+        # SECURITY CHECK: Must NOT have dev_reset_link for unknown email
+        if "dev_reset_link" in data:
+            log_fail("SECURITY ISSUE: dev_reset_link present for unknown email (leaks email existence)")
+            return False
+        log_pass("dev_reset_link NOT present (correct - no email leak)")
+        
+        return True
+            
     except Exception as e:
-        log_test("GET /api/doctors?q=aisha", "FAIL", f"Exception: {str(e)}")
+        log_fail(f"Exception: {e}")
+        return False
+
+def test_forgot_password_invalid_email():
+    """Test forgot-password with invalid email format"""
+    log_test("POST /api/auth/forgot-password - Invalid email format")
     
-    # 3. GET /api/doctors?q=sleep - Search by specialty
+    url = f"{BASE_URL}/auth/forgot-password"
+    headers = {
+        "Content-Type": "application/json",
+        "Origin": "https://example.com"
+    }
+    payload = {"email": "not-an-email"}
+    
     try:
-        response = requests.get(
-            f"{BASE_URL}/doctors?q=sleep",
-            headers={"Authorization": f"Bearer {token}"},
-            timeout=10
-        )
+        resp = requests.post(url, json=payload, headers=headers, timeout=10)
         
-        if response.status_code == 200:
-            data = response.json()
-            if isinstance(data, list):
-                # Check if results contain "sleep" in specialty
-                matching = [d for d in data if "sleep" in (d.get("specialty") or "").lower()]
-                if len(matching) > 0:
-                    log_test("GET /api/doctors?q=sleep", "PASS", f"Status: {response.status_code}, Found {len(matching)} matching doctor(s) by specialty")
-                else:
-                    log_test("GET /api/doctors?q=sleep", "FAIL", f"Status: {response.status_code}, No matching doctors found by specialty")
-            else:
-                log_test("GET /api/doctors?q=sleep", "FAIL", f"Status: {response.status_code}, Response is not a list")
-        else:
-            log_test("GET /api/doctors?q=sleep", "FAIL", f"Status: {response.status_code}, Response: {response.text[:200]}")
+        # Check status code - must be 422 validation error, NOT 500
+        if resp.status_code != 422:
+            log_fail(f"Expected 422 validation error, got {resp.status_code}")
+            log_info(f"Response: {resp.text}")
+            return False
+        
+        log_pass(f"Status code: {resp.status_code} (validation error)")
+        return True
+            
     except Exception as e:
-        log_test("GET /api/doctors?q=sleep", "FAIL", f"Exception: {str(e)}")
+        log_fail(f"Exception: {e}")
+        return False
+
+def test_reset_password_valid_token(token):
+    """Test reset-password with valid token"""
+    log_test("POST /api/auth/reset-password - Valid token")
     
-    # 4. GET /api/doctors?q=zzzznomatch - Search with no matches
+    url = f"{BASE_URL}/auth/reset-password"
+    headers = {"Content-Type": "application/json"}
+    payload = {
+        "token": token,
+        "new_password": "TempPass@999"
+    }
+    
     try:
-        response = requests.get(
-            f"{BASE_URL}/doctors?q=zzzznomatch",
-            headers={"Authorization": f"Bearer {token}"},
-            timeout=10
-        )
+        resp = requests.post(url, json=payload, headers=headers, timeout=10)
         
-        if response.status_code == 200:
-            data = response.json()
-            if isinstance(data, list) and len(data) == 0:
-                log_test("GET /api/doctors?q=zzzznomatch", "PASS", f"Status: {response.status_code}, Empty list returned (expected)")
-            else:
-                log_test("GET /api/doctors?q=zzzznomatch", "FAIL", f"Status: {response.status_code}, Expected empty list")
-        else:
-            log_test("GET /api/doctors?q=zzzznomatch", "FAIL", f"Status: {response.status_code}, Response: {response.text[:200]}")
+        # Check status code
+        if resp.status_code != 200:
+            log_fail(f"Expected 200, got {resp.status_code}")
+            log_info(f"Response: {resp.text}")
+            return False
+        
+        log_pass(f"Status code: {resp.status_code}")
+        
+        # Check response structure
+        data = resp.json()
+        
+        # Must have ok:true
+        if not data.get("ok"):
+            log_fail("Response missing 'ok: true'")
+            return False
+        log_pass("Response has 'ok: true'")
+        
+        # Must have message
+        if not data.get("message"):
+            log_fail("Response missing 'message'")
+            return False
+        log_pass(f"Message: {data['message']}")
+        
+        return True
+            
     except Exception as e:
-        log_test("GET /api/doctors?q=zzzznomatch", "FAIL", f"Exception: {str(e)}")
+        log_fail(f"Exception: {e}")
+        return False
+
+def test_reset_password_reuse_token(token):
+    """Test reset-password with already used token"""
+    log_test("POST /api/auth/reset-password - Reuse token (must fail)")
     
-    return True
+    url = f"{BASE_URL}/auth/reset-password"
+    headers = {"Content-Type": "application/json"}
+    payload = {
+        "token": token,
+        "new_password": "AnotherPass@123"
+    }
+    
+    try:
+        resp = requests.post(url, json=payload, headers=headers, timeout=10)
+        
+        # Check status code - must be 400, NOT 200 or 500
+        if resp.status_code != 400:
+            log_fail(f"Expected 400, got {resp.status_code}")
+            log_info(f"Response: {resp.text}")
+            return False
+        
+        log_pass(f"Status code: {resp.status_code}")
+        
+        # Check error message
+        data = resp.json()
+        detail = data.get("detail", "")
+        if "already been used" not in detail.lower() and "invalid" not in detail.lower():
+            log_fail(f"Expected error about token being used/invalid, got: {detail}")
+            return False
+        log_pass(f"Error message: {detail}")
+        
+        return True
+            
+    except Exception as e:
+        log_fail(f"Exception: {e}")
+        return False
+
+def test_reset_password_garbage_token():
+    """Test reset-password with garbage token"""
+    log_test("POST /api/auth/reset-password - Garbage token")
+    
+    url = f"{BASE_URL}/auth/reset-password"
+    headers = {"Content-Type": "application/json"}
+    payload = {
+        "token": "garbage-token-123456789",
+        "new_password": "ValidPass@123"
+    }
+    
+    try:
+        resp = requests.post(url, json=payload, headers=headers, timeout=10)
+        
+        # Check status code - must be 400, NOT 500
+        if resp.status_code != 400:
+            log_fail(f"Expected 400, got {resp.status_code}")
+            log_info(f"Response: {resp.text}")
+            return False
+        
+        log_pass(f"Status code: {resp.status_code}")
+        
+        # Check error message
+        data = resp.json()
+        detail = data.get("detail", "")
+        if "invalid" not in detail.lower():
+            log_fail(f"Expected error about invalid token, got: {detail}")
+            return False
+        log_pass(f"Error message: {detail}")
+        
+        return True
+            
+    except Exception as e:
+        log_fail(f"Exception: {e}")
+        return False
+
+def test_reset_password_short_password(token):
+    """Test reset-password with password shorter than 8 chars"""
+    log_test("POST /api/auth/reset-password - Short password (< 8 chars)")
+    
+    url = f"{BASE_URL}/auth/reset-password"
+    headers = {"Content-Type": "application/json"}
+    payload = {
+        "token": token,
+        "new_password": "abc"
+    }
+    
+    try:
+        resp = requests.post(url, json=payload, headers=headers, timeout=10)
+        
+        # Check status code - must be 422 validation error, NOT 500
+        if resp.status_code != 422:
+            log_fail(f"Expected 422 validation error, got {resp.status_code}")
+            log_info(f"Response: {resp.text}")
+            return False
+        
+        log_pass(f"Status code: {resp.status_code} (validation error)")
+        return True
+            
+    except Exception as e:
+        log_fail(f"Exception: {e}")
+        return False
+
+def test_login_with_new_password():
+    """Test login with new password after reset"""
+    log_test("POST /api/auth/login - Login with NEW password")
+    
+    url = f"{BASE_URL}/auth/login"
+    headers = {"Content-Type": "application/json"}
+    payload = {
+        "email": ADMIN_EMAIL,
+        "password": "TempPass@999"
+    }
+    
+    try:
+        resp = requests.post(url, json=payload, headers=headers, timeout=10)
+        
+        # Check status code
+        if resp.status_code != 200:
+            log_fail(f"Expected 200, got {resp.status_code}")
+            log_info(f"Response: {resp.text}")
+            return False
+        
+        log_pass(f"Status code: {resp.status_code}")
+        
+        # Check response has token
+        data = resp.json()
+        if not data.get("token"):
+            log_fail("Response missing 'token'")
+            return False
+        log_pass("Login successful with new password")
+        
+        return True
+            
+    except Exception as e:
+        log_fail(f"Exception: {e}")
+        return False
+
+def test_login_with_old_password():
+    """Test login with old password after reset (must fail)"""
+    log_test("POST /api/auth/login - Login with OLD password (must fail)")
+    
+    url = f"{BASE_URL}/auth/login"
+    headers = {"Content-Type": "application/json"}
+    payload = {
+        "email": ADMIN_EMAIL,
+        "password": ADMIN_PASSWORD  # Old password
+    }
+    
+    try:
+        resp = requests.post(url, json=payload, headers=headers, timeout=10)
+        
+        # Check status code - must be 401, NOT 200
+        if resp.status_code != 401:
+            log_fail(f"Expected 401, got {resp.status_code}")
+            log_info(f"Response: {resp.text}")
+            return False
+        
+        log_pass(f"Status code: {resp.status_code} (old password correctly rejected)")
+        return True
+            
+    except Exception as e:
+        log_fail(f"Exception: {e}")
+        return False
+
+def restore_admin_password():
+    """CLEANUP: Restore admin password back to Admin@12345"""
+    log_test("CLEANUP: Restore admin password to Admin@12345")
+    
+    # Step 1: Request password reset
+    url = f"{BASE_URL}/auth/forgot-password"
+    headers = {
+        "Content-Type": "application/json",
+        "Origin": "https://example.com"
+    }
+    payload = {"email": ADMIN_EMAIL}
+    
+    try:
+        resp = requests.post(url, json=payload, headers=headers, timeout=10)
+        
+        if resp.status_code != 200:
+            log_fail(f"Failed to request reset: {resp.status_code}")
+            return False
+        
+        data = resp.json()
+        if "dev_reset_link" not in data:
+            log_fail("No dev_reset_link in response")
+            return False
+        
+        # Extract token
+        reset_link = data["dev_reset_link"]
+        token = reset_link.split("token=")[1]
+        log_info(f"Got reset token: {token[:20]}...")
+        
+        # Step 2: Reset password back to Admin@12345
+        url = f"{BASE_URL}/auth/reset-password"
+        payload = {
+            "token": token,
+            "new_password": ADMIN_PASSWORD
+        }
+        
+        resp = requests.post(url, json=payload, headers=headers, timeout=10)
+        
+        if resp.status_code != 200:
+            log_fail(f"Failed to reset password: {resp.status_code}")
+            log_info(f"Response: {resp.text}")
+            return False
+        
+        log_pass("Password reset to Admin@12345")
+        
+        # Step 3: Verify login with Admin@12345
+        url = f"{BASE_URL}/auth/login"
+        payload = {
+            "email": ADMIN_EMAIL,
+            "password": ADMIN_PASSWORD
+        }
+        
+        resp = requests.post(url, json=payload, headers=headers, timeout=10)
+        
+        if resp.status_code != 200:
+            log_fail(f"Failed to login with restored password: {resp.status_code}")
+            return False
+        
+        log_pass("Login successful with Admin@12345 - CLEANUP COMPLETE")
+        return True
+            
+    except Exception as e:
+        log_fail(f"Exception: {e}")
+        return False
 
 def main():
-    """Run all tests"""
-    print(f"\n{BLUE}{'='*60}{RESET}")
-    print(f"{BLUE}CampionAI Backend API Tests - NEW ENDPOINTS{RESET}")
-    print(f"{BLUE}{'='*60}{RESET}")
+    print(f"\n{BLUE}{'='*70}{RESET}")
+    print(f"{BLUE}CampionAI Backend Testing - Password Reset Endpoints{RESET}")
+    print(f"{BLUE}{'='*70}{RESET}")
+    print(f"Backend URL: {BASE_URL}")
+    print(f"Admin Email: {ADMIN_EMAIL}")
     
-    # 1. Test login (no-regression)
-    token = test_login()
-    if not token:
-        print(f"\n{RED}CRITICAL: Login failed. Cannot proceed with other tests.{RESET}")
-        sys.exit(1)
+    results = []
     
-    # 2. Start Plus trial
-    trial_started = test_start_trial(token)
-    if not trial_started:
-        print(f"\n{RED}CRITICAL: Could not start Plus trial. Wellness endpoints will fail.{RESET}")
-        sys.exit(1)
+    # Test 1: forgot-password with registered email
+    token = test_forgot_password_registered_email()
+    if token and isinstance(token, str):
+        results.append(("forgot-password (registered email)", True))
+    else:
+        results.append(("forgot-password (registered email)", False))
+        print(f"\n{RED}CRITICAL: Cannot continue without valid token{RESET}")
+        return False
     
-    # 3. Test wellness plan endpoints
-    test_wellness_plan(token)
+    # Test 2: forgot-password with unknown email (security check)
+    result = test_forgot_password_unknown_email()
+    results.append(("forgot-password (unknown email - no leak)", result))
     
-    # 4. Test wellness streak
-    test_wellness_streak(token)
+    # Test 3: forgot-password with invalid email format
+    result = test_forgot_password_invalid_email()
+    results.append(("forgot-password (invalid email format)", result))
     
-    # 5. Test wellness food endpoints
-    test_wellness_food(token)
+    # Test 4: reset-password with valid token
+    result = test_reset_password_valid_token(token)
+    results.append(("reset-password (valid token)", result))
     
-    # 6. Test chat feedback
-    test_chat_feedback(token)
+    # Test 5: reset-password with reused token
+    result = test_reset_password_reuse_token(token)
+    results.append(("reset-password (reuse token)", result))
     
-    # 7. Test doctors search
-    test_doctors_search(token)
+    # Test 6: reset-password with garbage token
+    result = test_reset_password_garbage_token()
+    results.append(("reset-password (garbage token)", result))
     
-    print(f"\n{BLUE}{'='*60}{RESET}")
-    print(f"{BLUE}All tests completed!{RESET}")
-    print(f"{BLUE}{'='*60}{RESET}\n")
+    # Get a fresh token for short password test
+    log_info("Getting fresh token for short password test...")
+    fresh_token = test_forgot_password_registered_email()
+    if fresh_token and isinstance(fresh_token, str):
+        # Test 7: reset-password with short password
+        result = test_reset_password_short_password(fresh_token)
+        results.append(("reset-password (short password)", result))
+    else:
+        results.append(("reset-password (short password)", False))
+    
+    # Test 8: login with new password
+    result = test_login_with_new_password()
+    results.append(("login (new password)", result))
+    
+    # Test 9: login with old password (must fail)
+    result = test_login_with_old_password()
+    results.append(("login (old password - must fail)", result))
+    
+    # CLEANUP: Restore admin password
+    result = restore_admin_password()
+    results.append(("CLEANUP (restore admin password)", result))
+    
+    # Summary
+    print(f"\n{BLUE}{'='*70}{RESET}")
+    print(f"{BLUE}TEST SUMMARY{RESET}")
+    print(f"{BLUE}{'='*70}{RESET}")
+    
+    passed = sum(1 for _, r in results if r)
+    total = len(results)
+    
+    for name, result in results:
+        status = f"{GREEN}PASS{RESET}" if result else f"{RED}FAIL{RESET}"
+        print(f"{status} - {name}")
+    
+    print(f"\n{BLUE}Total: {passed}/{total} tests passed{RESET}")
+    
+    if passed == total:
+        print(f"{GREEN}✓ ALL TESTS PASSED{RESET}")
+        return True
+    else:
+        print(f"{RED}✗ SOME TESTS FAILED{RESET}")
+        return False
 
 if __name__ == "__main__":
-    main()
+    success = main()
+    sys.exit(0 if success else 1)

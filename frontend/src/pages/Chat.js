@@ -79,6 +79,14 @@ export default function Chat() {
     if (atBottom && scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
   }, [messages, thinking, atBottom]);
 
+  // Auto-grow the composer as the user types (caps at ~7 lines).
+  useEffect(() => {
+    const el = inputRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${Math.min(el.scrollHeight, 168)}px`;
+  }, [input]);
+
   const onScroll = () => {
     const el = scrollRef.current;
     if (!el) return;
@@ -413,7 +421,7 @@ export default function Chat() {
           )}
           <div className="max-w-3xl mx-auto">
             <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={pickFile} data-testid="file-input" />
-            <div className="rounded-[1.75rem] border border-border bg-white/[0.03] backdrop-blur-md px-2.5 py-2 focus-within:border-foreground/40 transition-colors">
+            <div className="rounded-[1.75rem] border border-border bg-white/[0.03] backdrop-blur-md px-2.5 py-2 transition-all focus-within:border-foreground/40 focus-within:bg-white/[0.05] focus-within:shadow-[0_0_0_4px_rgba(255,255,255,0.03)]">
               {attachment && (
                 <div className="flex items-center gap-3 px-2 pt-1.5 pb-2.5" data-testid="attachment-preview">
                   <img src={attachment.preview} alt="" className="h-14 w-14 rounded-xl object-cover border border-border" />
@@ -421,12 +429,12 @@ export default function Chat() {
                   <button onClick={clearAttachment} className="text-muted-foreground hover:text-foreground" data-testid="remove-attachment"><X className="h-4 w-4" /></button>
                 </div>
               )}
-              <div className="flex items-center gap-1.5">
+              <div className="flex items-end gap-1.5">
                 <button data-testid="attach-button" onClick={() => fileRef.current?.click()} disabled={uploading}
                   className="shrink-0 h-10 w-10 rounded-full flex items-center justify-center text-foreground/60 hover:bg-accent hover:text-foreground transition-colors disabled:opacity-40" title="Share a photo">
                   {uploading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Paperclip className="h-4 w-4" />}
                 </button>
-                <button data-testid="mic-button" onClick={toggleListen} title="Speak"
+                <button data-testid="mic-button" onClick={toggleListen} title={listening ? "Stop" : "Speak"}
                   className={`shrink-0 h-10 w-10 rounded-full flex items-center justify-center transition-colors ${listening ? "bg-escalation text-white soft-pulse" : "text-foreground/60 hover:bg-accent hover:text-foreground"}`}>
                   <Mic className="h-4 w-4" />
                 </button>
@@ -438,15 +446,16 @@ export default function Chat() {
                   onKeyDown={onKey}
                   placeholder={`${listening ? "Listening…" : attachment ? "Add a note (optional)" : "Message CampionAI"}${user?.private_mode ? " · Private Mode" : ""}`}
                   rows={1}
-                  className="flex-1 resize-none border-0 bg-transparent focus-visible:ring-0 shadow-none max-h-40 min-h-[40px] leading-[40px] py-0 text-base placeholder:text-muted-foreground"
+                  className="flex-1 resize-none border-0 bg-transparent focus-visible:ring-0 shadow-none max-h-44 min-h-[40px] py-2 text-base leading-relaxed placeholder:text-muted-foreground"
                 />
                 <Button data-testid="chat-send-button" onClick={() => send()} disabled={streaming || uploading || (!input.trim() && !attachment)}
-                  size="icon" className="rounded-full h-10 w-10 shrink-0 bg-primary text-primary-foreground hover:bg-zinc-200 disabled:opacity-30">
-                  <ArrowUp className="h-4 w-4" />
+                  size="icon" className={`rounded-full h-10 w-10 shrink-0 bg-primary text-primary-foreground hover:bg-zinc-200 transition-all duration-200 disabled:opacity-30 ${(input.trim() || attachment) && !streaming ? "scale-100" : "scale-90"}`}>
+                  {streaming ? <Loader2 className="h-4 w-4 animate-spin" /> : <ArrowUp className="h-4 w-4" />}
                 </Button>
               </div>
             </div>
-            <p className="text-[11px] text-muted-foreground/70 text-center mt-3">
+            <p className="text-[11px] text-muted-foreground/60 text-center mt-3">
+              <span className="hidden sm:inline"><kbd className="font-mono-data text-[10px]">Enter</kbd> to send · <kbd className="font-mono-data text-[10px]">Shift+Enter</kbd> for a new line · </span>
               CampionAI is an AI companion, not a therapist. In an emergency, call your local emergency number.
             </p>
           </div>

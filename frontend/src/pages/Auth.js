@@ -2,10 +2,11 @@ import React, { useState } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import { motion } from "framer-motion";
 import { useAuth } from "@/context/AuthContext";
+import { api } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { toast } from "@/components/ui/sonner";
-import { Loader2 } from "lucide-react";
+import { Loader2, MailCheck } from "lucide-react";
 
 const BG_IMG =
   "https://images.pexels.com/photos/36969840/pexels-photo-36969840.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940";
@@ -29,6 +30,29 @@ export default function Auth() {
   const [password, setPassword] = useState("");
   const [name, setName] = useState("");
   const [loading, setLoading] = useState(false);
+  const [sent, setSent] = useState(false);
+  const [devLink, setDevLink] = useState(null);
+
+  const forgot = async (e) => {
+    e.preventDefault();
+    setLoading(true);
+    try {
+      const { data } = await api.post("/auth/forgot-password", { email });
+      setSent(true);
+      setDevLink(data.dev_reset_link || null);
+    } catch {
+      toast.error("Something went wrong — please try again");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const switchMode = (m) => {
+    setMode(m);
+    setSent(false);
+    setDevLink(null);
+    setPassword("");
+  };
 
   const submit = async (e) => {
     e.preventDefault();
@@ -80,18 +104,63 @@ export default function Auth() {
           className="w-full max-w-sm"
         >
           <h1 className="font-display font-light text-4xl tracking-tight mb-2">
-            {mode === "login" ? "Welcome back" : "Create your account"}
+            {mode === "login" ? "Welcome back" : mode === "forgot" ? "Reset your password" : "Create your account"}
           </h1>
           <p className="text-sm text-muted-foreground mb-10">
-            {mode === "login" ? "Sign in to continue with CampionAI" : "It takes less than two minutes"}
+            {mode === "login" ? "Sign in to continue with CampionAI"
+              : mode === "forgot" ? "Enter your email and we'll send you a reset link"
+              : "It takes less than two minutes"}
           </p>
 
+          {mode === "forgot" ? (
+            sent ? (
+              <div data-testid="forgot-sent">
+                <MailCheck className="h-8 w-8 text-emerald-400 mb-5" strokeWidth={1.5} />
+                <p className="text-foreground mb-2">Check your inbox</p>
+                <p className="text-sm text-muted-foreground mb-8 leading-relaxed">
+                  If <span className="text-foreground">{email}</span> is registered, a reset link is on its way. It expires in 30 minutes.
+                </p>
+                {devLink && (
+                  <div className="mb-8 rounded-2xl border border-amber-400/40 bg-amber-400/[0.06] p-4" data-testid="forgot-dev-link">
+                    <p className="text-[10px] tracking-[0.2em] uppercase text-amber-400/90 mb-2">Dev mode · email not configured</p>
+                    <p className="text-xs text-muted-foreground mb-3">Email delivery starts once a Resend key is added. Until then, use this link to reset now:</p>
+                    <a href={devLink} className="text-sm text-foreground underline underline-offset-2 break-all">{devLink}</a>
+                  </div>
+                )}
+                <button className="text-sm text-foreground font-medium hover:underline underline-offset-4" onClick={() => switchMode("login")} data-testid="forgot-back-to-login">
+                  Back to sign in
+                </button>
+              </div>
+            ) : (
+              <form onSubmit={forgot} className="space-y-6" data-testid="forgot-form">
+                <Flushed label="Email" testid="forgot-email-input" type="email" required placeholder="you@email.com" value={email} onChange={(e) => setEmail(e.target.value)} />
+                <Button data-testid="forgot-submit-button" type="submit" disabled={loading} className="w-full rounded-full h-12 text-base bg-primary text-primary-foreground hover:bg-zinc-200 mt-2">
+                  {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : "Send reset link"}
+                </Button>
+                <p className="text-sm text-muted-foreground text-center">
+                  Remembered it?{" "}
+                  <button type="button" className="text-foreground font-medium hover:underline underline-offset-4" onClick={() => switchMode("login")} data-testid="forgot-cancel">
+                    Back to sign in
+                  </button>
+                </p>
+              </form>
+            )
+          ) : (
+          <>
           <form onSubmit={submit} className="space-y-6">
             {mode === "register" && (
               <Flushed label="Preferred name" testid="auth-name-input" placeholder="What should I call you?" value={name} onChange={(e) => setName(e.target.value)} />
             )}
             <Flushed label="Email" testid="auth-email-input" type="email" required placeholder="you@email.com" value={email} onChange={(e) => setEmail(e.target.value)} />
-            <Flushed label="Password" testid="auth-password-input" type="password" required minLength={6} placeholder="••••••••" value={password} onChange={(e) => setPassword(e.target.value)} />
+            <div>
+              <Flushed label="Password" testid="auth-password-input" type="password" required minLength={mode === "register" ? 8 : 6} placeholder="••••••••" value={password} onChange={(e) => setPassword(e.target.value)} />
+              {mode === "login" && (
+                <button type="button" onClick={() => switchMode("forgot")} data-testid="forgot-password-link"
+                  className="text-xs text-muted-foreground hover:text-foreground transition-colors mt-2">
+                  Forgot password?
+                </button>
+              )}
+            </div>
             <Button data-testid="auth-submit-button" type="submit" disabled={loading} className="w-full rounded-full h-12 text-base bg-primary text-primary-foreground hover:bg-zinc-200 mt-2">
               {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : mode === "login" ? "Sign in" : "Create account"}
             </Button>
@@ -120,10 +189,12 @@ export default function Auth() {
 
           <p className="text-sm text-muted-foreground mt-8 text-center">
             {mode === "login" ? "New here? " : "Already have an account? "}
-            <button data-testid="auth-toggle-mode" className="text-foreground font-medium hover:underline underline-offset-4" onClick={() => setMode(mode === "login" ? "register" : "login")}>
+            <button data-testid="auth-toggle-mode" className="text-foreground font-medium hover:underline underline-offset-4" onClick={() => switchMode(mode === "login" ? "register" : "login")}>
               {mode === "login" ? "Create an account" : "Sign in"}
             </button>
           </p>
+          </>
+          )}
         </motion.div>
       </div>
     </div>

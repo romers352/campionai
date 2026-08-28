@@ -29,6 +29,15 @@ class GoogleSessionInput(BaseModel):
     session_id: str
 
 
+class ForgotPasswordInput(BaseModel):
+    email: EmailStr
+
+
+class ResetPasswordInput(BaseModel):
+    token: str = Field(min_length=8, max_length=200)
+    new_password: str = Field(min_length=8, max_length=200)
+
+
 class TrustedContact(BaseModel):
     name: str
     relationship: str

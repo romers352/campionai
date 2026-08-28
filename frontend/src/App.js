@@ -4,6 +4,7 @@ import { BrowserRouter, Routes, Route, Navigate, useLocation } from "react-route
 import { useAuth } from "@/context/AuthContext";
 import Landing from "@/pages/Landing";
 import Auth from "@/pages/Auth";
+import ResetPassword from "@/pages/ResetPassword";
 import AuthCallback from "@/components/AuthCallback";
 import Onboarding from "@/pages/Onboarding";
 import Chat from "@/pages/Chat";
@@ -82,6 +83,7 @@ function AppInner() {
     <Routes>
       <Route path="/" element={loading ? <FullLoader /> : user ? <Navigate to={homeFor(user)} replace /> : <Landing />} />
       <Route path="/auth" element={user ? <Navigate to={homeFor(user)} replace /> : <Auth />} />
+      <Route path="/reset-password" element={<ResetPassword />} />
       <Route path="/onboarding" element={<Onboarding />} />
       {/* Public content pages */}
       <Route path="/about" element={<About />} />
