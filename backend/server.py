@@ -1,3 +1,4 @@
+import asyncio
 import os
 import re
 import json
@@ -1494,9 +1495,23 @@ INDEXES = [
 ]
 
 
+INDEX_PING_TIMEOUT_SEC = 5
+
+
 async def ensure_indexes():
     """Every query in this app filters by user_id/doctor_id/session_id. Without these
-    Mongo collection-scans each one."""
+    Mongo collection-scans each one.
+
+    Probe once before the loop: each create_index against an unreachable Mongo blocks
+    for the full server-selection timeout (30s by default), so without this a brief
+    outage turned startup into a ~10-minute hang instead of a fast, loud failure.
+    """
+    try:
+        await asyncio.wait_for(db.command("ping"), timeout=INDEX_PING_TIMEOUT_SEC)
+    except Exception as e:
+        logger.error(f"Mongo unreachable, skipping index setup: {str(e)[:160]}")
+        return
+
     for coll, keys, opts in INDEXES:
         try:
             await db[coll].create_index(keys, **opts)
