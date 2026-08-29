@@ -60,9 +60,8 @@ export function PayPalDonate({ clientId, amount, anonymous, onDone, disabled }) 
           }}
           onApprove={async (data) => {
             try {
-              await api.post(`/donations/capture/${data.orderID}`);
-              toast.success("Thank you — truly.");
-              onDone?.();
+              const res = await api.post(`/donations/capture/${data.orderID}`);
+              onDone?.(res.data);
             } catch (e) {
               toast.error(e?.response?.data?.detail || "Could not complete the donation");
             }

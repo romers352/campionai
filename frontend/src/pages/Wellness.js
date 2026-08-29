@@ -20,6 +20,7 @@ import {
 import BreathingPlayer from "@/components/BreathingPlayer";
 
 const MEALS = ["breakfast", "lunch", "dinner", "snack"];
+const RANK_COLOR = ["#e5b567", "#c0c5ce", "#c08457"]; // gold, silver, bronze
 const BADGE_ICON = { sprout: Sprout, flame: Flame, medal: Medal, trophy: Trophy, heart: Heart, smile: Smile };
 const MOODS = [
   { v: 1, label: "Rough", Icon: Frown },
@@ -55,11 +56,15 @@ const PLAN_PERKS = [
 function Paywall({ status, onTrial, onActivated, busy }) {
   const [pricing, setPricing] = useState(null);
   const [donors, setDonors] = useState([]);
+  const [stats, setStats] = useState(null);
   const [custom, setCustom] = useState("");
   const [anon, setAnon] = useState(false);
   const [donateAmount, setDonateAmount] = useState(null);
+  const [thankYou, setThankYou] = useState(null);
 
-  const loadDonors = () => api.get("/donors/top").then(({ data }) => setDonors(data)).catch(() => {});
+  const loadDonors = () => api.get("/donors/top")
+    .then(({ data }) => { setDonors(data.supporters || []); setStats(data); })
+    .catch(() => {});
   useEffect(() => {
     api.get("/pricing").then(({ data }) => setPricing(data)).catch(() => toast.error("Couldn't load pricing"));
     loadDonors();
@@ -71,7 +76,12 @@ function Paywall({ status, onTrial, onActivated, busy }) {
     setDonateAmount(amt);
   };
 
-  const afterDonation = () => { setDonateAmount(null); setCustom(""); loadDonors(); };
+  const afterDonation = (res) => {
+    setThankYou({ amount: res?.amount ?? donateAmount, name: res?.donor_name });
+    setDonateAmount(null);
+    setCustom("");
+    loadDonors();
+  };
 
   if (!pricing) {
     return <div className="relative z-10 flex justify-center py-32"><Loader2 className="h-6 w-6 animate-spin text-primary" /></div>;
@@ -205,23 +215,75 @@ function Paywall({ status, onTrial, onActivated, busy }) {
             <p className="text-xs text-muted-foreground mb-12">Pick an amount above to continue.</p>
           )}
 
-          {donors.length > 0 && (
-            <div>
-              <p className="text-[10px] tracking-[0.3em] uppercase text-muted-foreground mb-5">Top supporters</p>
-              <div className="space-y-px bg-border border border-border rounded-2xl overflow-hidden" data-testid="top-donors">
-                {donors.map((d, i) => (
-                  <div key={i} className="bg-card/60 flex items-center gap-4 p-4" data-testid={`donor-${i}`}>
-                    <span className="font-mono-data text-sm text-muted-foreground w-5 shrink-0">{i + 1}</span>
-                    <img src={d.avatar} alt="" className="h-9 w-9 rounded-full border border-border shrink-0" />
-                    <p className="flex-1 text-sm font-medium truncate">{d.name}</p>
-                    <span className="font-display font-light text-lg shrink-0">${d.total}</span>
+          {(donors.length > 0 || (stats && stats.total_raised > 0)) && (
+            <div data-testid="supporters-wall">
+              {stats && stats.total_raised > 0 && (
+                <div className="grid grid-cols-3 gap-px bg-border border border-border rounded-2xl overflow-hidden mb-6">
+                  {[
+                    { v: `$${Math.round(stats.total_raised)}`, l: "Raised together" },
+                    { v: stats.supporter_count, l: "Supporters" },
+                    { v: stats.gift_count, l: "Gifts given" },
+                  ].map((s) => (
+                    <div key={s.l} className="bg-card/60 p-5 text-center">
+                      <p className="font-display font-light text-3xl leading-none">{s.v}</p>
+                      <p className="text-[10px] tracking-[0.2em] uppercase text-muted-foreground mt-2">{s.l}</p>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {donors.length > 0 && (
+                <>
+                  <p className="text-[10px] tracking-[0.3em] uppercase text-muted-foreground mb-5">Our supporters</p>
+                  <div className="space-y-px bg-border border border-border rounded-2xl overflow-hidden" data-testid="top-donors">
+                    {donors.map((d, i) => (
+                      <div key={i} className="bg-card/60 flex items-center gap-4 p-4" data-testid={`donor-${i}`}>
+                        <span className="w-6 shrink-0 flex justify-center">
+                          {i < 3
+                            ? <Medal className="h-4 w-4" style={{ color: RANK_COLOR[i] }} strokeWidth={2} />
+                            : <span className="font-mono-data text-sm text-muted-foreground">{i + 1}</span>}
+                        </span>
+                        <img src={d.avatar} alt="" className="h-9 w-9 rounded-full border border-border shrink-0" />
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-medium truncate">{d.name}</p>
+                          <span className="inline-flex items-center gap-1.5 text-[11px]" style={{ color: d.tier_color }}>
+                            <span className="h-1.5 w-1.5 rounded-full shrink-0" style={{ background: d.tier_color }} />
+                            {d.tier}{d.count > 1 ? ` · ${d.count} gifts` : ""}
+                          </span>
+                        </div>
+                        <span className="font-display font-light text-lg shrink-0">${d.total}</span>
+                      </div>
+                    ))}
                   </div>
-                ))}
-              </div>
+                </>
+              )}
             </div>
           )}
         </div>
       </motion.div>
+
+      {thankYou && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-6"
+          data-testid="donation-thankyou" onClick={() => setThankYou(null)}>
+          <motion.div initial={{ opacity: 0, scale: 0.94, y: 12 }} animate={{ opacity: 1, scale: 1, y: 0 }}
+            transition={{ duration: 0.45, ease: [0.16, 1, 0.3, 1] }}
+            className="relative bg-card border border-border rounded-3xl p-10 max-w-md w-full text-center ambient-shadow-lg"
+            onClick={(e) => e.stopPropagation()}>
+            <div className="mx-auto mb-6 h-16 w-16 rounded-full bg-white/[0.04] border border-border flex items-center justify-center">
+              <Heart className="h-7 w-7 text-primary" strokeWidth={1.5} />
+            </div>
+            <h3 className="font-display font-light text-3xl mb-3">
+              Thank you{thankYou.name ? `, ${thankYou.name}` : ""}.
+            </h3>
+            <p className="text-muted-foreground leading-relaxed mb-2">
+              Your gift of <span className="text-foreground font-medium">${Number(thankYou.amount || 0).toFixed(2)}</span> helps
+              keep CampionAI free for everyone who needs it.
+            </p>
+            <p className="text-sm text-muted-foreground mb-8">A receipt is on its way to your email.</p>
+            <Button className="rounded-full bg-primary text-primary-foreground hover:bg-zinc-200 px-8"
+              onClick={() => setThankYou(null)} data-testid="thankyou-done">Done</Button>
+          </motion.div>
+        </div>
+      )}
     </div>
   );
 }

@@ -104,6 +104,21 @@
 user_problem_statement: "Add PayPal (LIVE) subscription integration for CampionAI Plus — credentials, live plans, and a webhook endpoint at /api/webhook/paypal handling the 6 subscription events."
 
 backend:
+  - task: "Supporters Wall (tiers + community stats) + donation receipt email"
+    implemented: true
+    working: true
+    file: "backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        -working: "NA"
+        -agent: "main"
+        -comment: "New/changed backend for enhancements (PayPal keys still NOT configured — graceful degradation). CHANGES: (a) GET /api/donors/top response shape CHANGED from a bare array to an object: {supporters:[{name,avatar,total,count,tier,tier_color}], total_raised, gift_count, supporter_count}. It is PUBLIC (no auth). With no donations yet it must return {supporters:[], total_raised:0, gift_count:0, supporter_count:0} and HTTP 200. (b) donation_capture now sends a receipt email (Resend, graceful if not configured) and returns {ok, amount, donor_name, message}. (c) Added _donor_tier() giving tiers Friend/Supporter/Sustainer/Champion/Patron by cumulative total. PLEASE VERIFY: (1) GET /api/donors/top (no auth) returns 200 with the new object shape and correct empty-state zeros. (2) POST /api/donations/order still returns clean 400 'PayPal is not configured' (no keys) — NOT 500. (3) POST /api/donations/capture/{fake} (authed) returns clean 4xx (404 'Order not found' for a random id) — NOT 500. (4) No regressions: /api/pricing 200, admin login 200, register/login/me 200. Note: full donation capture + receipt cannot be exercised without PayPal sandbox keys."
+        -working: true
+        -agent: "testing"
+        -comment: "VERIFIED ALL 4 TEST SCENARIOS (4/4 PASSED): (1) GET /api/donors/top is PUBLIC (works with NO auth header) and returns HTTP 200 with correct OBJECT shape: {supporters:[], total_raised:0.0, gift_count:0, supporter_count:0}. Confirmed 'supporters' is a list and all three numeric fields exist and are 0 in empty state. Response is an object (NOT an array). (2) POST /api/donations/order (authenticated, body {amount:10}) returns clean HTTP 400 with detail 'PayPal is not configured' (NOT 500 - graceful degradation confirmed). (3) POST /api/donations/capture/FAKE-ORDER-{uuid} (authenticated) returns clean HTTP 404 with detail 'Order not found' (NOT 500 - graceful error handling). (4) NO-REGRESSION VERIFIED: GET /api/pricing returns 200. Admin login (admin@campionai.com / Admin@12345) returns 200 with token. GET /api/auth/me returns 200. Register new user returns 200 with token. Login with new user returns 200. GET /api/auth/me with new user returns 200. (5) Backend booted cleanly with no import errors - logs show graceful warning 'PayPal not configured — subscriptions are unavailable until credentials are set'. Test file: /app/test_supporters_wall.py. ALL REQUIREMENTS FROM REVIEW_REQUEST MET. NO ISSUES FOUND."
+
   - task: "Payment system health after Stripe removal (PayPal-only) — no keys configured"
     implemented: true
     working: true
@@ -309,8 +324,7 @@ metadata:
   run_ui: false
 
 test_plan:
-  current_focus:
-    - "Payment system health after Stripe removal (PayPal-only) — no keys configured"
+  current_focus: []
   stuck_tasks: []
   test_all: false
   test_priority: "high_first"
@@ -385,3 +399,7 @@ agent_communication:
 agent_communication:
     -agent: "testing"
     -message: "✅ PAYMENT SYSTEM HEALTH AFTER STRIPE REMOVAL - ALL 13 TESTS PASSED (13/13). PayPal-only payment system verified with NO credentials configured (graceful degradation confirmed). (1) GET /api/pricing: Returns HTTP 200 with currency:USD, paypal_client_id:null, trial_days:14, plans[] with 2 items (plus_monthly, plus_yearly) each having paypal_plan_id:null, donations[] with 3 items (donate_5, donate_15, donate_30). (2) POST /api/donations/order: Returns HTTP 400 'PayPal is not configured' (NOT 500 - graceful). (3) POST /api/paypal/activate: Returns HTTP 400 'PayPal is not configured' (NOT 500 - graceful). (4) GET /api/plus/billing: Returns HTTP 200 with 'payments' list and 'plus' state. (5) POST /api/plus/cancel: Returns HTTP 400 'No active subscription to cancel' (NOT 500). (6) App booted cleanly with graceful warning 'PayPal not configured — subscriptions are unavailable until credentials are set'. Admin user seeded successfully (admin@campionai.com / Admin@12345). Login returns HTTP 200 with token. GET /api/auth/me returns HTTP 200 with is_admin:true. (7) All Stripe endpoints return HTTP 404 (correctly removed). (8) NO-REGRESSION AUTH: Register new user (200 with token), login with new user (200 with token), GET /api/auth/me (200 with correct email). Backend logs confirm no import errors, no crashes, graceful degradation working correctly. Test file: /app/backend_test.py. ALL REQUIREMENTS FROM REVIEW_REQUEST MET. NO ISSUES FOUND. READY FOR MAIN AGENT TO SUMMARIZE AND FINISH."
+
+agent_communication:
+    -agent: "testing"
+    -message: "✅ SUPPORTERS WALL + DONATION RECEIPT - ALL 4 TESTS PASSED (4/4). (1) GET /api/donors/top is PUBLIC (no auth required) and returns HTTP 200 with correct OBJECT shape: {supporters:[], total_raised:0.0, gift_count:0, supporter_count:0}. Verified 'supporters' is a list and all numeric fields are 0 in empty state. Response is an object (NOT an array) as required. (2) POST /api/donations/order (authenticated, body {amount:10}) returns clean HTTP 400 with detail 'PayPal is not configured' (NOT 500 - graceful degradation confirmed). (3) POST /api/donations/capture/FAKE-ORDER-ID (authenticated) returns clean HTTP 404 with detail 'Order not found' (NOT 500 - graceful error handling). (4) NO-REGRESSION VERIFIED: GET /api/pricing (200), admin login (200 with token), GET /api/auth/me (200), register new user (200 with token), login with new user (200), GET /api/auth/me with new user (200). (5) Backend booted cleanly with no import errors - logs show graceful warning 'PayPal not configured'. Test file: /app/test_supporters_wall.py. ALL REQUIREMENTS FROM REVIEW_REQUEST MET. NO ISSUES FOUND. READY FOR MAIN AGENT TO SUMMARIZE AND FINISH."

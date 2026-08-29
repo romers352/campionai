@@ -1098,6 +1098,23 @@ async def _claim_transaction(session_key: str):
     )
 
 
+# Cumulative-giving tiers. Ordered high → low; first match wins.
+DONOR_TIERS = [
+    (250, "Patron", "#e5b567"),
+    (100, "Champion", "#d4a017"),
+    (50, "Sustainer", "#9aa0a6"),
+    (15, "Supporter", "#b08d57"),
+    (0, "Friend", "#8a8a8f"),
+]
+
+
+def _donor_tier(total: float) -> dict:
+    for threshold, label, color in DONOR_TIERS:
+        if total >= threshold:
+            return {"label": label, "color": color}
+    return {"label": "Friend", "color": "#8a8a8f"}
+
+
 async def _record_donation(record):
     if record.get("anonymous") or not record.get("user_id"):
         return
@@ -1106,9 +1123,38 @@ async def _record_donation(record):
     avatar = f"https://ui-avatars.com/api/?name={name.replace(' ', '+')}&background=1a1a1c&color=fafafa&bold=true"
     await db.donors.update_one(
         {"user_id": record["user_id"]},
-        {"$inc": {"total": amount}, "$set": {"name": name, "avatar": avatar, "last_at": now_iso()}},
+        {"$inc": {"total": amount, "count": 1}, "$set": {"name": name, "avatar": avatar, "last_at": now_iso()}},
         upsert=True,
     )
+
+
+def _donation_receipt_html(name: str, amount: float, order_id: str, date_str: str) -> str:
+    return f"""
+    <div style="font-family:system-ui,sans-serif;max-width:480px;margin:0 auto;color:#1a1a1c">
+      <h2 style="font-weight:500">Thank you, {name} 💛</h2>
+      <p style="color:#555;line-height:1.6">Your gift keeps CampionAI free for people who need a companion.
+      We're genuinely grateful — this is what makes it possible.</p>
+      <div style="border:1px solid #eee;border-radius:14px;padding:18px 20px;margin:22px 0;background:#fafafa">
+        <p style="margin:0 0 6px;color:#888;font-size:12px;text-transform:uppercase;letter-spacing:2px">Donation receipt</p>
+        <p style="margin:0;font-size:28px;font-weight:600">${amount:.2f} <span style="font-size:13px;color:#888;font-weight:400">USD</span></p>
+        <p style="margin:10px 0 0;color:#777;font-size:13px">Date: {date_str}</p>
+        <p style="margin:4px 0 0;color:#aaa;font-size:12px;word-break:break-all">Ref: {order_id}</p>
+      </div>
+      <p style="color:#888;font-size:13px;line-height:1.6">Donations are voluntary and non-refundable.
+      Keep this email as your receipt. With warmth — the CampionAI team.</p>
+    </div>
+    """
+
+
+async def _send_donation_receipt(to_email: str, name: str, amount: float, order_id: str):
+    """Fire a receipt email. Degrades gracefully when Resend isn't configured."""
+    if not to_email:
+        return
+    date_str = datetime.now(timezone.utc).strftime("%B %d, %Y")
+    try:
+        await send_email(to_email, "Your CampionAI donation receipt", _donation_receipt_html(name, amount, order_id, date_str))
+    except Exception as e:
+        logger.error(f"donation receipt failed: {e}")
 
 
 # ---------------- Subscription lifecycle ----------------
@@ -1301,7 +1347,11 @@ async def donation_capture(order_id: str, user=Depends(get_current_user)):
     claimed = await _claim_transaction(session_key)
     if claimed:
         await _record_donation(claimed)
-    return {"ok": True, "amount": record["amount"]}
+    # Warm receipt — always to the donor (personal), even for anonymous public listing.
+    donor_name = (user.get("profile", {}) or {}).get("preferred_name") or user["email"].split("@")[0]
+    await _send_donation_receipt(user["email"], donor_name, float(record["amount"]), order_id)
+    return {"ok": True, "amount": record["amount"], "donor_name": donor_name,
+            "message": "Thank you — truly. A receipt is on its way to your email."}
 
 
 @api.post("/contact")
@@ -1322,8 +1372,35 @@ async def submit_contact(inp: ContactInput):
 
 @api.get("/donors/top")
 async def top_donors():
-    donors = await db.donors.find({}, {"_id": 0}).sort("total", -1).to_list(10)
-    return [{"name": d.get("name"), "avatar": d.get("avatar"), "total": round(d.get("total", 0), 2)} for d in donors]
+    """Public supporters wall — named donors ranked by lifetime giving, with tiers,
+    plus community totals (which include anonymous gifts)."""
+    donors = await db.donors.find({}, {"_id": 0}).sort("total", -1).to_list(12)
+    supporters = []
+    for d in donors:
+        total = round(d.get("total", 0), 2)
+        tier = _donor_tier(total)
+        supporters.append({
+            "name": d.get("name"),
+            "avatar": d.get("avatar"),
+            "total": total,
+            "count": int(d.get("count", 1) or 1),
+            "tier": tier["label"],
+            "tier_color": tier["color"],
+        })
+
+    # Community stats include anonymous donations (which never create a donor row).
+    agg = await db.payment_transactions.aggregate([
+        {"$match": {"type": "donation", "granted": True}},
+        {"$group": {"_id": None, "raised": {"$sum": "$amount"}, "gifts": {"$sum": 1},
+                    "supporters": {"$addToSet": "$user_id"}}},
+    ]).to_list(1)
+    stats = agg[0] if agg else {}
+    return {
+        "supporters": supporters,
+        "total_raised": round(float(stats.get("raised", 0) or 0), 2),
+        "gift_count": int(stats.get("gifts", 0) or 0),
+        "supporter_count": len(stats.get("supporters", []) or []),
+    }
 
 
 # ---------------- PayPal webhook (the authority) ----------------
