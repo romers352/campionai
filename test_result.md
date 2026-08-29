@@ -104,6 +104,21 @@
 user_problem_statement: "Add PayPal (LIVE) subscription integration for CampionAI Plus — credentials, live plans, and a webhook endpoint at /api/webhook/paypal handling the 6 subscription events."
 
 backend:
+  - task: "Payment system health after Stripe removal (PayPal-only) — no keys configured"
+    implemented: true
+    working: true
+    file: "backend/server.py, backend/paypal_client.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        -working: "NA"
+        -agent: "main"
+        -comment: "Iteration: fully removed remaining Stripe traces (2 frontend comments reworded to PayPal-only; deleted stale backend/tests/test_iteration4_plus_payments.py that targeted deleted Stripe routes). PayPal is the only rail. PayPal credentials are NOT set in .env (graceful degradation expected). Please VERIFY graceful, non-crashing behavior with NO keys: (1) GET /api/pricing returns 200 with paypal_client_id=null, plans[] each with paypal_plan_id=null, donations[] (donate_5/15/30). (2) POST /api/donations/order (authed) returns a clean 4xx (400 'PayPal is not configured'), NOT a 500. (3) POST /api/paypal/activate (authed, dummy ids) returns clean 400 'PayPal is not configured', NOT 500. (4) GET /api/plus/billing (authed) returns 200 with payments list. (5) POST /api/plus/cancel (authed, no sub) returns 400 'No active subscription to cancel'. (6) App boots cleanly, admin seeded (admin@campionai.com / Admin@12345). (7) No Stripe endpoints exist. Confirm no regressions in auth/login."
+        -working: true
+        -agent: "testing"
+        -comment: "VERIFIED ALL 13 TESTS PASSED (13/13): (1) GET /api/pricing returns HTTP 200 with currency:USD, paypal_client_id:null (correct - no keys configured), trial_days:14, plans[] array with 2 items (plus_monthly, plus_yearly) each having paypal_plan_id:null, donations[] array with 3 items (donate_5 $5, donate_15 $15, donate_30 $30). (2) POST /api/donations/order (authenticated, body {amount:10}) returns HTTP 400 with detail 'PayPal is not configured' (NOT 500 - graceful degradation confirmed). (3) POST /api/paypal/activate (authenticated, body {subscription_id:'I-DUMMY123', plan_key:'monthly'}) returns HTTP 400 with detail 'PayPal is not configured' (NOT 500 - graceful degradation confirmed). (4) GET /api/plus/billing (authenticated) returns HTTP 200 with 'payments' list (empty array) and 'plus' state (active:false). (5) POST /api/plus/cancel (authenticated, no subscription) returns HTTP 400 with detail 'No active subscription to cancel' (NOT 500). (6) App booted cleanly - backend logs show 'PayPal not configured — subscriptions are unavailable until credentials are set' warning (graceful degradation), admin user seeded successfully. Login with admin@campionai.com / Admin@12345 returns HTTP 200 with token. GET /api/auth/me returns HTTP 200 with email:admin@campionai.com, is_admin:true. (7) All Stripe endpoints (/stripe/create-checkout-session, /stripe/webhook, /stripe/portal, /stripe/subscription-status) return HTTP 404 (correctly removed). (8) NO-REGRESSION AUTH VERIFIED: Register new user returns HTTP 200 with token. Login with new user returns HTTP 200 with token. GET /api/auth/me with new user returns HTTP 200 with correct email. Test file: /app/backend_test.py. ALL REQUIREMENTS FROM REVIEW_REQUEST MET. NO ISSUES FOUND."
+
   - task: "POST /api/contact (public contact form)"
     implemented: true
     working: true
@@ -294,7 +309,8 @@ metadata:
   run_ui: false
 
 test_plan:
-  current_focus: []
+  current_focus:
+    - "Payment system health after Stripe removal (PayPal-only) — no keys configured"
   stuck_tasks: []
   test_all: false
   test_priority: "high_first"
@@ -365,3 +381,7 @@ agent_communication:
     -message: "✅ ALL PHASE-3 CHAT BACKEND TESTS PASSED (11/11). (1) POST /api/memories/pin: Valid text returns 200 with memory doc (category='pinned', tier='LONG_TERM'). Pinned memory appears in GET /api/memories list. Empty text returns 422 (NOT 500). No auth returns 401. (2) POST /api/sessions/{id}/summary: Created real conversation with 2 messages via POST /api/chat/stream. Summary endpoint returns 200 with warm LLM-generated text (EMERGENT_LLM_KEY working). Non-existent session returns 404 (NOT 500). Empty session (<2 messages) returns friendly stub 'This conversation is just getting started — there's not much to recap yet.' (3) REGRESSION VERIFIED: GET /api/sessions returns 200. GET /api/auth/me returns 200. Test file: /app/backend_test.py. ALL REQUIREMENTS FROM REVIEW_REQUEST MET. NO ISSUES FOUND."
 
 #====================================================================================================
+
+agent_communication:
+    -agent: "testing"
+    -message: "✅ PAYMENT SYSTEM HEALTH AFTER STRIPE REMOVAL - ALL 13 TESTS PASSED (13/13). PayPal-only payment system verified with NO credentials configured (graceful degradation confirmed). (1) GET /api/pricing: Returns HTTP 200 with currency:USD, paypal_client_id:null, trial_days:14, plans[] with 2 items (plus_monthly, plus_yearly) each having paypal_plan_id:null, donations[] with 3 items (donate_5, donate_15, donate_30). (2) POST /api/donations/order: Returns HTTP 400 'PayPal is not configured' (NOT 500 - graceful). (3) POST /api/paypal/activate: Returns HTTP 400 'PayPal is not configured' (NOT 500 - graceful). (4) GET /api/plus/billing: Returns HTTP 200 with 'payments' list and 'plus' state. (5) POST /api/plus/cancel: Returns HTTP 400 'No active subscription to cancel' (NOT 500). (6) App booted cleanly with graceful warning 'PayPal not configured — subscriptions are unavailable until credentials are set'. Admin user seeded successfully (admin@campionai.com / Admin@12345). Login returns HTTP 200 with token. GET /api/auth/me returns HTTP 200 with is_admin:true. (7) All Stripe endpoints return HTTP 404 (correctly removed). (8) NO-REGRESSION AUTH: Register new user (200 with token), login with new user (200 with token), GET /api/auth/me (200 with correct email). Backend logs confirm no import errors, no crashes, graceful degradation working correctly. Test file: /app/backend_test.py. ALL REQUIREMENTS FROM REVIEW_REQUEST MET. NO ISSUES FOUND. READY FOR MAIN AGENT TO SUMMARIZE AND FINISH."

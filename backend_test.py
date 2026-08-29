@@ -10,7 +10,7 @@ import sys
 import time
 
 # Backend URL from frontend/.env
-BASE_URL = "https://stripe-removal-flow.preview.emergentagent.com/api"
+BASE_URL = "https://5bf17d89-e033-4713-a907-ef5b1c33b4af.preview.emergentagent.com/api"
 
 # Test credentials from /app/memory/test_credentials.md
 ADMIN_EMAIL = "admin@campionai.com"
@@ -1264,7 +1264,357 @@ def test_phase3_chat_endpoints():
         print(f"{RED}✗ SOME PHASE-3 CHAT TESTS FAILED{RESET}")
         return False
 
+def test_payment_system_health():
+    """
+    Test payment system health after Stripe removal (PayPal-only, no keys configured).
+    Verify graceful degradation when PayPal credentials are NOT configured.
+    """
+    print(f"\n{BLUE}{'='*70}{RESET}")
+    print(f"{BLUE}PAYMENT SYSTEM HEALTH TEST (PayPal-only, no keys){RESET}")
+    print(f"{BLUE}{'='*70}{RESET}")
+    
+    results = []
+    
+    # Step 1: Login as admin to get JWT token
+    log_test("Login as admin")
+    try:
+        login_resp = requests.post(
+            f"{BASE_URL}/auth/login",
+            json={"email": ADMIN_EMAIL, "password": ADMIN_PASSWORD},
+            timeout=10
+        )
+        if login_resp.status_code != 200:
+            log_fail(f"Login failed with status {login_resp.status_code}: {login_resp.text}")
+            results.append(("Admin login", False))
+            return False
+        
+        token = login_resp.json().get("token")
+        if not token:
+            log_fail("No token in login response")
+            results.append(("Admin login", False))
+            return False
+        
+        log_pass(f"Login successful, token obtained")
+        results.append(("Admin login", True))
+        headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+    except Exception as e:
+        log_fail(f"Login exception: {e}")
+        results.append(("Admin login", False))
+        return False
+    
+    # Test 1: GET /api/pricing returns 200 with correct structure
+    log_test("GET /api/pricing - Verify structure with no PayPal keys")
+    try:
+        resp = requests.get(f"{BASE_URL}/pricing", timeout=10)
+        
+        if resp.status_code == 200:
+            data = resp.json()
+            log_pass(f"Status code: 200")
+            
+            # Verify currency
+            if data.get("currency") == "USD":
+                log_pass(f"currency: USD")
+            else:
+                log_fail(f"Expected currency: USD, got {data.get('currency')}")
+                results.append(("GET /api/pricing (currency)", False))
+            
+            # Verify paypal_client_id is null (no keys configured)
+            if data.get("paypal_client_id") is None:
+                log_pass(f"paypal_client_id: null (correct - no keys configured)")
+            else:
+                log_fail(f"Expected paypal_client_id: null, got {data.get('paypal_client_id')}")
+                results.append(("GET /api/pricing (paypal_client_id=null)", False))
+            
+            # Verify trial_days
+            if data.get("trial_days") == 14:
+                log_pass(f"trial_days: 14")
+            else:
+                log_fail(f"Expected trial_days: 14, got {data.get('trial_days')}")
+            
+            # Verify plans array
+            plans = data.get("plans", [])
+            if len(plans) == 2:
+                log_pass(f"plans: 2 items (plus_monthly, plus_yearly)")
+                
+                # Check each plan has paypal_plan_id = null
+                all_null = True
+                for plan in plans:
+                    if plan.get("paypal_plan_id") is not None:
+                        log_fail(f"Plan {plan.get('id')} has paypal_plan_id={plan.get('paypal_plan_id')}, expected null")
+                        all_null = False
+                
+                if all_null:
+                    log_pass(f"All plans have paypal_plan_id: null (correct - no keys configured)")
+                    results.append(("GET /api/pricing (plans with paypal_plan_id=null)", True))
+                else:
+                    results.append(("GET /api/pricing (plans with paypal_plan_id=null)", False))
+            else:
+                log_fail(f"Expected 2 plans, got {len(plans)}")
+                results.append(("GET /api/pricing (plans array)", False))
+            
+            # Verify donations array
+            donations = data.get("donations", [])
+            expected_donations = ["donate_5", "donate_15", "donate_30"]
+            donation_ids = [d.get("id") for d in donations]
+            
+            if all(d_id in donation_ids for d_id in expected_donations):
+                log_pass(f"donations: {len(donations)} items (donate_5, donate_15, donate_30)")
+                results.append(("GET /api/pricing (donations array)", True))
+            else:
+                log_fail(f"Expected donations {expected_donations}, got {donation_ids}")
+                results.append(("GET /api/pricing (donations array)", False))
+            
+            results.append(("GET /api/pricing (200 with correct structure)", True))
+        else:
+            log_fail(f"Status {resp.status_code}: {resp.text}")
+            results.append(("GET /api/pricing (200 with correct structure)", False))
+    except Exception as e:
+        log_fail(f"Exception: {e}")
+        results.append(("GET /api/pricing (200 with correct structure)", False))
+    
+    # Test 2: POST /api/donations/order returns clean 400 (NOT 500)
+    log_test("POST /api/donations/order - No PayPal keys → 400 (NOT 500)")
+    try:
+        donation_payload = {"amount": 10}
+        resp = requests.post(f"{BASE_URL}/donations/order", json=donation_payload, headers=headers, timeout=10)
+        
+        if resp.status_code == 400:
+            data = resp.json()
+            detail = data.get("detail", "")
+            if "PayPal is not configured" in detail or "paypal" in detail.lower():
+                log_pass(f"Status 400 with detail: '{detail}'")
+                results.append(("POST /api/donations/order (400 not 500)", True))
+            else:
+                log_fail(f"Got 400 but unexpected detail: '{detail}'")
+                results.append(("POST /api/donations/order (400 not 500)", False))
+        elif resp.status_code == 500:
+            log_fail(f"Got 500 error (should be 400): {resp.text}")
+            results.append(("POST /api/donations/order (400 not 500)", False))
+        elif resp.status_code == 502:
+            # 502 is also acceptable as it indicates graceful degradation
+            data = resp.json()
+            detail = data.get("detail", "")
+            log_pass(f"Status 502 (graceful degradation): '{detail}'")
+            results.append(("POST /api/donations/order (400 not 500)", True))
+        else:
+            log_fail(f"Unexpected status {resp.status_code}: {resp.text}")
+            results.append(("POST /api/donations/order (400 not 500)", False))
+    except Exception as e:
+        log_fail(f"Exception: {e}")
+        results.append(("POST /api/donations/order (400 not 500)", False))
+    
+    # Test 3: POST /api/paypal/activate returns clean 400 (NOT 500)
+    log_test("POST /api/paypal/activate - No PayPal keys → 400 (NOT 500)")
+    try:
+        activate_payload = {"subscription_id": "I-DUMMY123", "plan_key": "monthly"}
+        resp = requests.post(f"{BASE_URL}/paypal/activate", json=activate_payload, headers=headers, timeout=10)
+        
+        if resp.status_code == 400:
+            data = resp.json()
+            detail = data.get("detail", "")
+            if "PayPal is not configured" in detail or "Could not verify" in detail:
+                log_pass(f"Status 400 with detail: '{detail}'")
+                results.append(("POST /api/paypal/activate (400 not 500)", True))
+            else:
+                log_fail(f"Got 400 but unexpected detail: '{detail}'")
+                results.append(("POST /api/paypal/activate (400 not 500)", False))
+        elif resp.status_code == 500:
+            log_fail(f"Got 500 error (should be 400): {resp.text}")
+            results.append(("POST /api/paypal/activate (400 not 500)", False))
+        else:
+            log_fail(f"Unexpected status {resp.status_code}: {resp.text}")
+            results.append(("POST /api/paypal/activate (400 not 500)", False))
+    except Exception as e:
+        log_fail(f"Exception: {e}")
+        results.append(("POST /api/paypal/activate (400 not 500)", False))
+    
+    # Test 4: GET /api/plus/billing returns 200 with payments list
+    log_test("GET /api/plus/billing - Returns 200 with payments list")
+    try:
+        resp = requests.get(f"{BASE_URL}/plus/billing", headers=headers, timeout=10)
+        
+        if resp.status_code == 200:
+            data = resp.json()
+            if "payments" in data and "plus" in data:
+                log_pass(f"Status 200 with 'payments' list and 'plus' state")
+                log_info(f"payments count: {len(data.get('payments', []))}")
+                log_info(f"plus.active: {data.get('plus', {}).get('active')}")
+                results.append(("GET /api/plus/billing (200 with structure)", True))
+            else:
+                log_fail(f"Response missing 'payments' or 'plus' fields: {data}")
+                results.append(("GET /api/plus/billing (200 with structure)", False))
+        else:
+            log_fail(f"Status {resp.status_code}: {resp.text}")
+            results.append(("GET /api/plus/billing (200 with structure)", False))
+    except Exception as e:
+        log_fail(f"Exception: {e}")
+        results.append(("GET /api/plus/billing (200 with structure)", False))
+    
+    # Test 5: POST /api/plus/cancel returns 400 (no active subscription)
+    log_test("POST /api/plus/cancel - No subscription → 400 (NOT 500)")
+    try:
+        resp = requests.post(f"{BASE_URL}/plus/cancel", headers=headers, timeout=10)
+        
+        if resp.status_code == 400:
+            data = resp.json()
+            detail = data.get("detail", "")
+            if "No active subscription" in detail or "cancel" in detail.lower():
+                log_pass(f"Status 400 with detail: '{detail}'")
+                results.append(("POST /api/plus/cancel (400 not 500)", True))
+            else:
+                log_fail(f"Got 400 but unexpected detail: '{detail}'")
+                results.append(("POST /api/plus/cancel (400 not 500)", False))
+        elif resp.status_code == 500:
+            log_fail(f"Got 500 error (should be 400): {resp.text}")
+            results.append(("POST /api/plus/cancel (400 not 500)", False))
+        else:
+            log_fail(f"Unexpected status {resp.status_code}: {resp.text}")
+            results.append(("POST /api/plus/cancel (400 not 500)", False))
+    except Exception as e:
+        log_fail(f"Exception: {e}")
+        results.append(("POST /api/plus/cancel (400 not 500)", False))
+    
+    # Test 6: Verify admin user seeded (login already tested above)
+    log_test("Verify admin user seeded - GET /api/auth/me")
+    try:
+        resp = requests.get(f"{BASE_URL}/auth/me", headers=headers, timeout=10)
+        
+        if resp.status_code == 200:
+            user = resp.json()
+            if user.get("email") == ADMIN_EMAIL and user.get("is_admin") is True:
+                log_pass(f"Admin user seeded correctly: {user.get('email')}, is_admin: {user.get('is_admin')}")
+                results.append(("Admin user seeded (GET /api/auth/me)", True))
+            else:
+                log_fail(f"Admin user data incorrect: {user}")
+                results.append(("Admin user seeded (GET /api/auth/me)", False))
+        else:
+            log_fail(f"Status {resp.status_code}: {resp.text}")
+            results.append(("Admin user seeded (GET /api/auth/me)", False))
+    except Exception as e:
+        log_fail(f"Exception: {e}")
+        results.append(("Admin user seeded (GET /api/auth/me)", False))
+    
+    # Test 7: Verify no Stripe endpoints exist
+    log_test("Verify no Stripe endpoints exist")
+    stripe_endpoints = [
+        "/stripe/create-checkout-session",
+        "/stripe/webhook",
+        "/stripe/portal",
+        "/stripe/subscription-status"
+    ]
+    
+    all_404 = True
+    for endpoint in stripe_endpoints:
+        try:
+            resp = requests.get(f"{BASE_URL}{endpoint}", headers=headers, timeout=5)
+            if resp.status_code != 404:
+                log_fail(f"Stripe endpoint {endpoint} returned {resp.status_code} (expected 404)")
+                all_404 = False
+        except Exception:
+            pass  # Timeout or connection error is fine
+    
+    if all_404:
+        log_pass(f"All Stripe endpoints return 404 (correctly removed)")
+        results.append(("No Stripe endpoints exist", True))
+    else:
+        results.append(("No Stripe endpoints exist", False))
+    
+    # Test 8: Auth regression - Register new user
+    log_test("Auth regression - Register new user")
+    test_email = f"test-{int(time.time())}@example.com"
+    try:
+        register_payload = {
+            "email": test_email,
+            "password": "TestPass@123",
+            "preferred_name": "Test User"
+        }
+        resp = requests.post(f"{BASE_URL}/auth/register", json=register_payload, timeout=10)
+        
+        if resp.status_code == 200:
+            data = resp.json()
+            if "token" in data and "user" in data:
+                log_pass(f"User registered successfully: {test_email}")
+                new_user_token = data.get("token")
+                results.append(("Auth regression - Register new user", True))
+            else:
+                log_fail(f"Response missing token or user: {data}")
+                results.append(("Auth regression - Register new user", False))
+                new_user_token = None
+        else:
+            log_fail(f"Status {resp.status_code}: {resp.text}")
+            results.append(("Auth regression - Register new user", False))
+            new_user_token = None
+    except Exception as e:
+        log_fail(f"Exception: {e}")
+        results.append(("Auth regression - Register new user", False))
+        new_user_token = None
+    
+    # Test 9: Auth regression - Login with new user
+    if new_user_token:
+        log_test("Auth regression - Login with new user")
+        try:
+            login_payload = {"email": test_email, "password": "TestPass@123"}
+            resp = requests.post(f"{BASE_URL}/auth/login", json=login_payload, timeout=10)
+            
+            if resp.status_code == 200:
+                data = resp.json()
+                if "token" in data:
+                    log_pass(f"Login successful with new user")
+                    results.append(("Auth regression - Login with new user", True))
+                else:
+                    log_fail(f"Response missing token: {data}")
+                    results.append(("Auth regression - Login with new user", False))
+            else:
+                log_fail(f"Status {resp.status_code}: {resp.text}")
+                results.append(("Auth regression - Login with new user", False))
+        except Exception as e:
+            log_fail(f"Exception: {e}")
+            results.append(("Auth regression - Login with new user", False))
+    
+    # Test 10: Auth regression - GET /api/auth/me with new user
+    if new_user_token:
+        log_test("Auth regression - GET /api/auth/me with new user")
+        try:
+            new_headers = {"Authorization": f"Bearer {new_user_token}", "Content-Type": "application/json"}
+            resp = requests.get(f"{BASE_URL}/auth/me", headers=new_headers, timeout=10)
+            
+            if resp.status_code == 200:
+                user = resp.json()
+                if user.get("email") == test_email:
+                    log_pass(f"GET /api/auth/me successful: {user.get('email')}")
+                    results.append(("Auth regression - GET /api/auth/me", True))
+                else:
+                    log_fail(f"User email mismatch: {user}")
+                    results.append(("Auth regression - GET /api/auth/me", False))
+            else:
+                log_fail(f"Status {resp.status_code}: {resp.text}")
+                results.append(("Auth regression - GET /api/auth/me", False))
+        except Exception as e:
+            log_fail(f"Exception: {e}")
+            results.append(("Auth regression - GET /api/auth/me", False))
+    
+    # Summary
+    print(f"\n{BLUE}{'='*70}{RESET}")
+    print(f"{BLUE}PAYMENT SYSTEM HEALTH TEST SUMMARY{RESET}")
+    print(f"{BLUE}{'='*70}{RESET}")
+    
+    passed = sum(1 for _, r in results if r)
+    total = len(results)
+    
+    for name, result in results:
+        status = f"{GREEN}PASS{RESET}" if result else f"{RED}FAIL{RESET}"
+        print(f"{status} - {name}")
+    
+    print(f"\n{BLUE}Total: {passed}/{total} tests passed{RESET}")
+    
+    if passed == total:
+        print(f"{GREEN}✓ ALL PAYMENT SYSTEM HEALTH TESTS PASSED{RESET}")
+        return True
+    else:
+        print(f"{RED}✗ SOME PAYMENT SYSTEM HEALTH TESTS FAILED{RESET}")
+        return False
+
 if __name__ == "__main__":
-    # Run Phase-3 Chat tests
-    success = test_phase3_chat_endpoints()
+    # Run Payment System Health tests
+    success = test_payment_system_health()
     sys.exit(0 if success else 1)

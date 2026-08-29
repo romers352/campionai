@@ -92,3 +92,9 @@ Phased build of 20 requested features. Phase 1 shipped:
 - [ ] Phase 4 — Doctor: availability calendar, ratings & reviews, in-session notes, follow-ups
 - [ ] Phase 5 — Safety: crisis-mode redesign + local hotlines, trusted circle
 - [ ] Phase 6 — NEEDS KEYS: voice (Fish Audio), smart reminders
+
+## Iteration (2026-08-29) — Stripe fully purged + payment health verified
+- [x] **Env recovery (again)**: `backend/.env` + `frontend/.env` were missing on this restore. Recreated (DB_NAME=campionai, EMERGENT_LLM_KEY, JWT_SECRET, CORS, ADMIN_PASSWORD; REACT_APP_BACKEND_URL + WDS_SOCKET_PORT). PayPal/Twilio/Resend/Fish/OpenROUTER left empty (graceful degradation). App restored & online.
+- [x] **Stripe fully purged**: reworded the two remaining "PayPal/Stripe" frontend comments (Wellness.js, AuthContext.js) to PayPal-only; deleted stale `backend/tests/test_iteration4_plus_payments.py` (targeted deleted Stripe routes). `grep` confirms zero Stripe references in shipped code. Backend testing agent confirmed all former `/stripe/*` endpoints 404.
+- [x] **Payment health verified (13/13)** with NO PayPal keys: `/api/pricing` 200 (client_id null, plan ids null, donations 5/15/30); `/api/donations/order`, `/api/paypal/activate` return clean 400 "PayPal is not configured" (never 500); `/api/plus/billing` 200; `/api/plus/cancel` 400. Auth no-regression green.
+- **BLOCKER to enable real plan + donation payments**: PayPal REST credentials (Client ID + Secret, optional Webhook ID) must be added to `backend/.env` (PAYPAL_CLIENT_ID / PAYPAL_SECRET / PAYPAL_WEBHOOK_ID + PAYPAL_MODE). Until then PayPal buttons don't render (by design).

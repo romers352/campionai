@@ -60,7 +60,7 @@ export function AuthProvider({ children }) {
   };
 
   // Keep the user (and Plus/subscription status) fresh when the tab regains
-  // focus — e.g. after returning from a PayPal/Stripe checkout in another tab.
+  // focus — e.g. after returning from a PayPal checkout in another tab.
   const silentRefresh = useCallback(async () => {
     if (!localStorage.getItem("campion_token")) return;
     try {

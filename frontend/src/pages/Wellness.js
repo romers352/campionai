@@ -335,7 +335,7 @@ export default function Wellness() {
   useEffect(() => { loadStatus().then((s) => { if (s.active) loadPlusData(); }); }, []);
 
   // Refresh Plus/subscription status (and plan data) when returning to the tab —
-  // e.g. right after completing a PayPal/Stripe checkout in another tab.
+  // e.g. right after completing a PayPal checkout in another tab.
   useVisibilityRefetch(async () => {
     try {
       await refresh();
